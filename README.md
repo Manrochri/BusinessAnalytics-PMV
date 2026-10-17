@@ -1,5 +1,5 @@
 # FundScope — Analítica de Fondos Mutuos con IA Generativa
-
+*NUeva versión*
 Aplicación web que analiza un fondo mutuo o ETF combinando **datos de mercado** (Yahoo Finance) con **noticias financieras** gratuitas (titulares de Yahoo Finance y tono diario de la prensa de GDELT), y que recomienda **qué hacer según el perfil del inversor**, incluidos los **bonos** que le convienen y **cuánto podría ganar** con ellos.
 
 Las recomendaciones se calculan con reglas auditables y modelos de machine learning evaluados contra líneas base. **Qwen3 en Ollama** (local) las explica en lenguaje natural; Gemini es un respaldo opcional.
