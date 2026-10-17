@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<edgarSubmission xmlns="http://www.sec.gov/edgar/nport" xmlns:com="http://www.sec.gov/edgar/common" xmlns:ncom="http://www.sec.gov/edgar/nportcommon">
+  <headerData><submissionType>NPORT-P</submissionType></headerData>
+  <formData>
+    <genInfo>
+      <regName>Fideicomiso de Ejemplo</regName><regCik>0000000001</regCik>
+      <seriesName>Fondo de Bonos de Ejemplo</seriesName><seriesId>S000000001</seriesId>
+      <repPdEnd>2026-12-31</repPdEnd><repPdDate>2026-06-30</repPdDate><isFinalFiling>N</isFinalFiling>
+    </genInfo>
+    <fundInfo><totAssets>1000000</totAssets><totLiabs>0</totLiabs><netAssets>1000000</netAssets></fundInfo>
+    <invstOrSecs>
+      <invstOrSec>
+        <name>United States Treasury</name><lei>254900HROIFWPRGM1V77</lei><title>US TREASURY N/B 4.0% 2029</title>
+        <cusip>91282CAA1</cusip><identifiers><isin value="US91282CAA10"/></identifiers>
+        <balance>300000</balance><units>PA</units><curCd>USD</curCd><valUSD>297000</valUSD><pctVal>29.7</pctVal>
+        <payoffProfile>Long</payoffProfile><assetCat>DBT</assetCat><issuerCat>UST</issuerCat><invCountry>US</invCountry>
+        <debtSec><maturityDt>2029-06-30</maturityDt><couponKind>Fixed</couponKind><annualizedRt>4.0</annualizedRt><isDefault>N</isDefault><areIntrstPmntsInArrs>N</areIntrstPmntsInArrs><isPaidKind>N</isPaidKind></debtSec>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Empresa Solida SA</name><lei>5493001KJTIIGC8Y1R12</lei><title>EMPRESA SOLIDA 5.0% 2031</title>
+        <cusip>12345AAA1</cusip><balance>200000</balance><units>PA</units><curCd>USD</curCd><valUSD>200000</valUSD><pctVal>20</pctVal>
+        <assetCat>DBT</assetCat><issuerCat>CORP</issuerCat><invCountry>US</invCountry>
+        <debtSec><maturityDt>2031-06-30</maturityDt><couponKind>Fixed</couponKind><annualizedRt>5.0</annualizedRt><isDefault>N</isDefault><areIntrstPmntsInArrs>N</areIntrstPmntsInArrs></debtSec>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Empresa Solida SA</name><lei>5493001KJTIIGC8Y1R12</lei><title>EMPRESA SOLIDA 6.0% 2045</title>
+        <cusip>12345AAB9</cusip><balance>100000</balance><units>PA</units><curCd>USD</curCd><valUSD>98000</valUSD><pctVal>9.8</pctVal>
+        <assetCat>DBT</assetCat><issuerCat>CORP</issuerCat><invCountry>US</invCountry>
+        <debtSec><maturityDt>2045-01-15</maturityDt><couponKind>Fixed</couponKind><annualizedRt>6.0</annualizedRt><isDefault>N</isDefault><areIntrstPmntsInArrs>N</areIntrstPmntsInArrs></debtSec>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Riesgosa Corp</name><lei>N/A</lei><title>RIESGOSA 9.5% 2030</title>
+        <cusip>99999ZZZ9</cusip><balance>150000</balance><units>PA</units><curCd>USD</curCd><valUSD>120000</valUSD><pctVal>12</pctVal>
+        <assetCat>DBT</assetCat><issuerCat>CORP</issuerCat><invCountry>US</invCountry>
+        <debtSec><maturityDt>2030-03-01</maturityDt><couponKind>Fixed</couponKind><annualizedRt>9.5</annualizedRt><isDefault>N</isDefault><areIntrstPmntsInArrs>N</areIntrstPmntsInArrs></debtSec>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Quebrada Inc</name><lei>N/A</lei><title>QUEBRADA 7% 2028</title>
+        <cusip>88888YYY8</cusip><balance>50000</balance><units>PA</units><curCd>USD</curCd><valUSD>20000</valUSD><pctVal>2</pctVal>
+        <assetCat>DBT</assetCat><issuerCat>CORP</issuerCat><invCountry>US</invCountry>
+        <debtSec><maturityDt>2028-05-01</maturityDt><couponKind>Fixed</couponKind><annualizedRt>7.0</annualizedRt><isDefault>Y</isDefault><areIntrstPmntsInArrs>Y</areIntrstPmntsInArrs></debtSec>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Fondo Monetario</name><lei>N/A</lei><title>MONEY MARKET</title><cusip>000000000</cusip>
+        <balance>10000</balance><units>NS</units><curCd>USD</curCd><valUSD>10000</valUSD><pctVal>1</pctVal>
+        <assetCat>STIV</assetCat><issuerCat>RF</issuerCat><invCountry>US</invCountry>
+      </invstOrSec>
+    </invstOrSecs>
+  </formData>
+</edgarSubmission>

@@ -1,0 +1,14 @@
+# Fuerza el tema claro de FundScope, independientemente del tema
+# oscuro/claro configurado en el sistema operativo o el navegador del
+# usuario. Sin esto, el CSS de estilos.py (pensado para tema claro)
+# choca con el tema oscuro y el texto queda casi invisible.
+[theme]
+base = "light"
+primaryColor = "#3366CC"
+backgroundColor = "#F4F6FA"
+secondaryBackgroundColor = "#EEF2F7"
+textColor = "#1F2937"
+font = "sans serif"
+
+[client]
+toolbarMode = "minimal"

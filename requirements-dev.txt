@@ -1,0 +1,6 @@
+# Herramientas de desarrollo: notebook, pruebas y linter
+-r requirements.txt
+jupyter>=1.1
+nbformat>=5.10
+pytest>=8
+ruff>=0.6

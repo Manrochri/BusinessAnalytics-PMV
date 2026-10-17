@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.pyc
+data/cache/*
+!data/cache/.gitkeep
+data/salidas/*
+!data/salidas/.gitkeep
+.ipynb_checkpoints/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
