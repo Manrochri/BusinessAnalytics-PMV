@@ -625,6 +625,7 @@ def construirContexto(datos, perfil, decision=None):
         "bonosDelPerfil": {"recomendacion": resumenBonos.get("recomendacion"), "ranking": bonos},
         "asignacion": [{"detalle": f["detalle"], "ticker": f["ticker"], "pesoPct": _pct(f["peso"], 1)} for f in asignacion["filas"]],
         "seleccionDelUsuario": _contextoSeleccion(decision),
+        "proyeccionCarteraCompleta": _contextoCartera(decision.get("proyeccionCartera")),
         "titulares": titulares,
     }
 
@@ -655,7 +656,23 @@ def _contextoSeleccion(decision):
             "gananciaPesimistaP10": numeroSeguro(proyeccion.get("gananciaPesimista"), 0),
             "gananciaOptimistaP90": numeroSeguro(proyeccion.get("gananciaOptimista"), 0),
             "probabilidadPerdidaPct": _pct(proyeccion.get("probabilidadPerdida"), 1),
+            "rendimientoAnualPct": _pct(proyeccion.get("rendimientoAnual")),
         } if proyeccion else None,
+    }
+
+
+def _contextoCartera(cartera):
+    """Proyeccion de toda la cartera (acciones + renta fija + liquidez) para el LLM."""
+    if not cartera:
+        return None
+    return {
+        "meses": cartera.get("meses"), "montoInvertido": numeroSeguro(cartera.get("montoTotal"), 0),
+        "valorFinalMediano": numeroSeguro(cartera.get("valorMediano"), 0),
+        "gananciaMediana": numeroSeguro(cartera.get("gananciaMediana"), 0),
+        "gananciaPesimistaP10": numeroSeguro(cartera.get("gananciaPesimista"), 0),
+        "gananciaOptimistaP90": numeroSeguro(cartera.get("gananciaOptimista"), 0),
+        "rendimientoAnualPct": _pct(cartera.get("rendimientoAnual")),
+        "probabilidadPerdidaPct": _pct(cartera.get("probabilidadPerdida"), 1),
     }
 
 
@@ -686,7 +703,7 @@ Dos o tres frases con los indicadores.
 Explica la señal y sus factores tal como vienen en 'senal.factores' (puntos de cada uno, y cuáles no participan y por qué). No la justifiques más allá de esos factores.
 
 ### Bonos para tu perfil y asignación
-Si 'seleccionDelUsuario' no es nulo, explica el fondo y los bonos específicos que eligió (emisor, vencimiento, rendimiento esperado, veredicto y su motivo), su coherencia con el perfil y la proyección. Si no, resume 'bonosDelPerfil'. Luego la asignación.
+Si 'seleccionDelUsuario' no es nulo, explica el fondo y los bonos específicos que eligió (emisor, vencimiento, rendimiento esperado, veredicto y su motivo), su coherencia con el perfil y la proyección. Si no, resume 'bonosDelPerfil'. Luego la asignación. Distingue la ganancia de la renta fija ('seleccionDelUsuario.proyeccion') de la de toda la cartera ('proyeccionCarteraCompleta'), que incluye las acciones.
 
 ### Riesgos a vigilar
 Tres viñetas con riesgos concretos que se desprenden de los datos.

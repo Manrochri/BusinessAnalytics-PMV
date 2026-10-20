@@ -23,7 +23,8 @@ from html import escape
 import pandas as pd
 import streamlit as st
 
-from src.analisisBonos import proyectarInversion
+from config import RETORNO_ESPERADO_ACCIONES, VOLATILIDAD_ACCIONES_RESPALDO
+from src.analisisBonos import proyectarCartera, proyectarInversion, rendimientoAnualizado
 from src.bonosIndividuales import (
     cambiosHistoricosTasas,
     evaluarSeleccion,
@@ -308,7 +309,7 @@ def pasoProyeccion(datos, perfil, fondo, modo, seleccion, tablaFondos, asignacio
     queSeProyecta = {MODO_BONOS: "los bonos que marcaste", MODO_FONDO: f"el fondo {fondo} completo",
                      MODO_LIQUIDEZ: "la liquidez"}.get(modo, "tu renta fija")
     encabezadoPaso(3, "Define el monto y mira la proyección",
-                   f"Se proyecta {queSeProyecta} con el monto que tu perfil destina a renta fija, frente a las alternativas.")
+                   f"Primero tu renta fija ({queSeProyecta}) frente a las alternativas; después, toda tu cartera: acciones, bonos y liquidez.")
     columnas = st.columns([2, 2, 3])
     capital = columnas[0].number_input("Capital total de la cartera (USD)", min_value=0.0, value=10000.0, step=1000.0, key="capitalTotal")
     meses = columnas[1].slider("Horizonte (meses)", 12, 120, 36, step=6, key="horizonteMeses")
@@ -322,9 +323,10 @@ def pasoProyeccion(datos, perfil, fondo, modo, seleccion, tablaFondos, asignacio
 
     st.markdown(htmlEleccion(datos, fondo, modo, seleccion, tablaFondos, montoRf, meses), unsafe_allow_html=True)
 
-    resultado = {"capital": capital, "meses": meses, "montoRf": montoRf, "plan": pd.DataFrame(), "proyeccion": None}
+    resultado = {"capital": capital, "meses": meses, "montoRf": montoRf, "plan": pd.DataFrame(), "proyeccion": None, "cartera": None}
     if montoRf <= 0:
         st.info("Con la asignación actual no hay monto para renta fija.")
+        resultado["cartera"] = proyeccionCarteraCompleta(datos, perfil, asignacion, capital, 0.0, meses, None) if capital else None
         return resultado
 
     tasa = datos["tasaLibre"]
@@ -336,19 +338,20 @@ def pasoProyeccion(datos, perfil, fondo, modo, seleccion, tablaFondos, asignacio
         plazos, cambios = cambiosTasasCacheados(datos, meses)
         proyeccion = proyectarBonos(plan, sobrante, meses, tasa, plazos, cambios)
         r = proyeccion["resumen"]
-        resultado.update(plan=plan, proyeccion=r)
+        resultado.update(plan=plan, proyeccion=r, valoresRf=proyeccion["valores"])
         alternativas.append({"nombre": f"★ Tus {len(seleccion)} bono(s) de {fondo}", "p10": r["valorPesimista"], "p50": r["valorMediano"],
                              "p90": r["valorOptimista"], "invertido": montoRf})
     if fondo:
         fila = tablaFondos.set_index("ticker").loc[fondo]
         historico = datos["universoBonos"].get(fondo, {}).get("historico")
         if not esNulo(fila["rendimientoEsperado"]):
-            pf = proyectarInversion(historico, fila["rendimientoEsperado"], montoRf, 0, meses, simulaciones=2000, tasaLiquidez=tasa)["resumen"]
+            simulacionFondo = proyectarInversion(historico, fila["rendimientoEsperado"], montoRf, 0, meses, simulaciones=3000, tasaLiquidez=tasa)
+            pf = dict(simulacionFondo["resumen"], montoTotal=montoRf)
             alternativas.append({"nombre": ("★ " if modo == MODO_FONDO or seleccion.empty and modo == MODO_BONOS else "")
                                  + f"Fondo {fondo} completo", "p10": pf["valorPesimista"], "p50": pf["valorMediano"],
                                  "p90": pf["valorOptimista"], "invertido": montoRf})
             if resultado["proyeccion"] is None and modo != MODO_LIQUIDEZ:
-                resultado["proyeccion"] = pf
+                resultado.update(proyeccion=pf, valoresRf=simulacionFondo["valores"])
     valorLiquidez = montoRf * (1 + tasa) ** (meses / 12)
     alternativas.append({"nombre": ("★ " if modo == MODO_LIQUIDEZ else "") + f"Liquidez ({tasa:.2%})", "p10": valorLiquidez, "p50": valorLiquidez, "p90": valorLiquidez, "invertido": montoRf})
     if resultado["proyeccion"] is None:
@@ -356,14 +359,18 @@ def pasoProyeccion(datos, perfil, fondo, modo, seleccion, tablaFondos, asignacio
                                    "gananciaPesimista": valorLiquidez - montoRf, "gananciaOptimista": valorLiquidez - montoRf,
                                    "valorPesimista": valorLiquidez, "valorOptimista": valorLiquidez, "probabilidadPerdida": 0.0,
                                    "montoTotal": montoRf, "meses": meses}
+        resultado["valoresRf"] = valorLiquidez
 
     r = resultado["proyeccion"]
+    r["rendimientoAnual"] = rendimientoAnualizado(r["valorMediano"], montoRf, meses)
+    st.markdown(f"##### Tu renta fija · {formatearMoneda(montoRf)}")
     filaTarjetas([
         {"etiqueta": "Monto en renta fija", "valor": formatearMoneda(montoRf),
          "nota": f"{len(seleccion)} bono(s) de {fondo}" if not seleccion.empty
                  else (f"Fondo {fondo} completo" if fondo and modo != MODO_LIQUIDEZ else "Liquidez")},
         {"etiqueta": f"Valor en {meses} meses (central)", "valor": formatearMoneda(r["valorMediano"]),
-         "nota": f"Ganancia {formatearMoneda(r['gananciaMediana'])}", "tono": "positivo" if r["gananciaMediana"] >= 0 else "negativo"},
+         "nota": f"Ganancia {formatearMoneda(r['gananciaMediana'])} · {formatearPorcentaje(r['rendimientoAnual'], 2)} anual",
+         "tono": "positivo" if r["gananciaMediana"] >= 0 else "negativo"},
         {"etiqueta": "Rango probable de ganancia", "valor": f"{formatearMoneda(r['gananciaPesimista'])} a {formatearMoneda(r['gananciaOptimista'])}",
          "nota": "Escenarios P10 – P90"},
         {"etiqueta": "Probabilidad de pérdida", "valor": formatearPorcentaje(r["probabilidadPerdida"], 1),
@@ -371,6 +378,8 @@ def pasoProyeccion(datos, perfil, fondo, modo, seleccion, tablaFondos, asignacio
     ])
     st.plotly_chart(graficarAlternativas(alternativas), use_container_width=True, key="prescriptivo_plotly_chart_3")
     st.caption("★ = tu elección. Las demás filas son la comparación: qué obtendrías con el mismo monto en otra alternativa.")
+
+    resultado["cartera"] = proyeccionCarteraCompleta(datos, perfil, asignacion, capital, montoRf, meses, resultado.get("valoresRf"))
 
     if not resultado["plan"].empty:
         plan = resultado["plan"]
@@ -399,6 +408,62 @@ def pasoProyeccion(datos, perfil, fondo, modo, seleccion, tablaFondos, asignacio
     return resultado
 
 
+def proyeccionCarteraCompleta(datos, perfil, asignacion, capital, montoRf, meses, valoresRf):
+    """
+    Proyecta TODA la cartera (acciones + renta fija elegida + liquidez) y la
+    muestra con su ganancia en dólares y en % anual. Devuelve el resumen o None.
+    """
+    tasa = datos["tasaLibre"]
+    pesoRv = sum(f["peso"] for f in asignacion["filas"] if f["clase"] == "Renta variable")
+    montoRv = capital * pesoRv
+    montoLiquidez = max(capital - montoRv - montoRf, 0.0)
+    # Acciones: el fondo analizado si es de acciones; si no, el ETF de mercado amplio de referencia
+    if datos.get("claseFondo") == "Renta variable":
+        historicoRv, nombreRv = datos["historico"], f"Acciones ({datos['ticker']}, el fondo analizado)"
+    else:
+        historicoRv, nombreRv = datos.get("rentaVariableReferencia"), f"Acciones (referencia {datos.get('tickerRentaVariable', 'VTI')})"
+    simulacionRv = proyectarInversion(historicoRv, RETORNO_ESPERADO_ACCIONES, montoRv, 0, meses, simulaciones=3000,
+                                      semilla=23, volatilidadRespaldo=VOLATILIDAD_ACCIONES_RESPALDO, centrarMediana=True)
+    componentes = [
+        {"clase": "Renta variable", "nombre": nombreRv, "monto": montoRv, "valores": simulacionRv["valores"]},
+        {"clase": "Renta fija", "nombre": "Tu renta fija (elección del paso 1-2)", "monto": montoRf,
+         "valores": valoresRf if valoresRf is not None else montoRf * (1 + tasa) ** (meses / 12)},
+        {"clase": "Liquidez", "nombre": f"Liquidez ({tasa:.2%})", "monto": montoLiquidez,
+         "valores": montoLiquidez * (1 + tasa) ** (meses / 12)},
+    ]
+    cartera = proyectarCartera(componentes, meses)
+    if cartera is None:
+        return None
+    r = cartera["resumen"]
+    st.markdown(f"##### Toda tu cartera · {formatearMoneda(capital)} · perfil {perfil}")
+    filaTarjetas([
+        {"etiqueta": f"Valor de tu cartera en {meses} meses", "valor": formatearMoneda(r["valorMediano"]),
+         "nota": "Escenario central (mediana)"},
+        {"etiqueta": "Ganancia esperada de toda tu cartera", "valor": formatearMoneda(r["gananciaMediana"]),
+         "nota": f"{formatearPorcentaje(r['rendimientoAnual'], 2)} anual", "tono": "positivo" if r["gananciaMediana"] >= 0 else "negativo",
+         "destacada": True},
+        {"etiqueta": "Rango probable de ganancia", "valor": f"{formatearMoneda(r['gananciaPesimista'])} a {formatearMoneda(r['gananciaOptimista'])}",
+         "nota": "Escenarios P10 – P90"},
+        {"etiqueta": "Probabilidad de pérdida", "valor": formatearPorcentaje(r["probabilidadPerdida"], 1),
+         "nota": "De terminar con menos de lo invertido"},
+    ])
+    partes = cartera["partes"]
+    vista = pd.DataFrame({
+        "Parte de la cartera": partes["nombre"], "Monto": partes["monto"].map(formatearMoneda),
+        "% de la cartera": (partes["monto"] / capital).map(lambda v: f"{v:.0%}") if capital else "",
+        "Ganancia central": partes["gananciaMediana"].map(formatearMoneda),
+        "Rendimiento anual": partes["rendimientoAnual"].map(lambda v: formatearPorcentaje(v, 2)),
+    })
+    st.dataframe(vista, use_container_width=True, hide_index=True, key="prescriptivo_dataframe_cartera")
+    st.caption(
+        f"Las acciones se simulan con su historia mensual, con un escenario central SUPUESTO de "
+        f"{RETORNO_ESPERADO_ACCIONES:.0%} anual (RETORNO_ESPERADO_ACCIONES en el .env); por eso un perfil con más acciones "
+        "espera ganar más, pero con un rango más ancho y más probabilidad de pérdida. Acciones y bonos se simulan por separado "
+        "y se suman escenario por escenario. Antes de impuestos y comisiones."
+    )
+    return r
+
+
 # ---------------------------------------------------------------------------
 # Paso 4: asignacion y plan
 # ---------------------------------------------------------------------------
@@ -425,7 +490,19 @@ def pasoAsignacionYPlan(datos, perfil, asignacion, plan, capital, coherencia, fo
 # ---------------------------------------------------------------------------
 # Resumen superior (se dibuja al final dentro del contenedor de arriba)
 # ---------------------------------------------------------------------------
-def dibujarResumen(datos, perfil, fondo, modo, seleccion, tablaFondos, asignacion, proyeccion, coherencia):
+def tarjetaGanancia(proyeccion, cartera):
+    """Ganancia de TODA la cartera, con la de la renta fija por separado (en $ y % anual)."""
+    if not cartera:
+        return {"etiqueta": "Ganancia esperada", "valor": "N/D", "nota": "Define el monto en el paso 3"}
+    notaRf = (f"Solo renta fija: {formatearMoneda(proyeccion['gananciaMediana'])} "
+              f"({formatearPorcentaje(proyeccion.get('rendimientoAnual'), 2)} anual)") if proyeccion else ""
+    return {"etiqueta": f"Ganancia de toda tu cartera · {cartera['meses']} meses",
+            "valor": formatearMoneda(cartera["gananciaMediana"]),
+            "nota": f"{formatearPorcentaje(cartera['rendimientoAnual'], 2)} anual · {notaRf}",
+            "tono": "positivo" if cartera["gananciaMediana"] >= 0 else "negativo"}
+
+
+def dibujarResumen(datos, perfil, fondo, modo, seleccion, tablaFondos, asignacion, proyeccion, coherencia, cartera=None):
     senal, metricas = datos["senal"], datos["metricas"]
     st.markdown(insignia(f"Tu decisión · perfil {perfil} · fondo {datos['ticker']}",
                          COLOR_PERFIL.get(perfil, "azul")),
@@ -456,10 +533,7 @@ def dibujarResumen(datos, perfil, fondo, modo, seleccion, tablaFondos, asignacio
         {"etiqueta": "Rendimiento esperado de tu renta fija", "valor": formatearPorcentaje(rendimiento, 2),
          "nota": f"Liquidez: {formatearPorcentaje(datos['tasaLibre'], 2)} anual",
          "tono": "positivo" if not esNulo(rendimiento) and rendimiento > datos["tasaLibre"] else "neutro"},
-        {"etiqueta": f"Ganancia esperada · {proyeccion.get('meses', '')} meses" if proyeccion else "Ganancia esperada",
-         "valor": formatearMoneda(proyeccion["gananciaMediana"]) if proyeccion else "N/D",
-         "nota": (f"Rango {formatearMoneda(proyeccion['gananciaPesimista'])} a {formatearMoneda(proyeccion['gananciaOptimista'])}"
-                  if proyeccion else "Define el monto en el paso 3")},
+        tarjetaGanancia(proyeccion, cartera),
     ])
     if modo == MODO_BONOS and not seleccion.empty:
         {"coherente": st.success, "cautela": st.warning, "riesgo": st.error}.get(coherencia["estado"], st.info)(coherencia["mensaje"])
@@ -576,10 +650,11 @@ def dibujarDashboardPrescriptivo(datos, perfil, proveedorInfo):
                         resumenFondos if modo != MODO_LIQUIDEZ else dict(resumenFondos, invertir=False))
 
     with resumenSuperior:
-        dibujarResumen(datos, perfil, fondo, modo, seleccion, tablaFondos, asignacion, resultado["proyeccion"], coherencia)
+        dibujarResumen(datos, perfil, fondo, modo, seleccion, tablaFondos, asignacion, resultado["proyeccion"], coherencia,
+                       resultado.get("cartera"))
 
     decision = {"fondo": fondoPlan, "modo": modo, "seleccion": seleccion, "asignacion": asignacion, "coherencia": coherencia,
-                "proyeccion": resultado["proyeccion"]}
+                "proyeccion": resultado["proyeccion"], "proyeccionCartera": resultado.get("cartera")}
     st.divider()
     st.markdown("#### Detalles del análisis")
     with st.expander(f"Por qué esta señal ({datos['senal']['accion']} en {datos['ticker']})"):
@@ -600,3 +675,4 @@ def dibujarDashboardPrescriptivo(datos, perfil, proveedorInfo):
         dibujarExplicacionIa(datos, perfil, proveedorInfo, decision)
     st.caption("Proyecto con fines académicos. Las recomendaciones salen de un modelo estadístico y no constituyen asesoría financiera.")
     return decision
+

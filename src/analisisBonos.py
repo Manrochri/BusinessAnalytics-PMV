@@ -238,14 +238,20 @@ def retornosMensuales(historico):
 
 
 def proyectarInversion(historico, rendimientoEsperadoAnual, montoInicial, aporteMensual, meses,
-                       simulaciones=3000, bloque=6, semilla=7, tasaLiquidez=None):
+                       simulaciones=3000, bloque=6, semilla=7, tasaLiquidez=None, volatilidadRespaldo=None,
+                       centrarMediana=False):
     """
     Simula el valor de una inversion mes a mes.
 
     - Retornos: remuestreo por bloques de 'bloque' meses de los retornos
       mensuales historicos, re-centrados en el retorno esperado mensual.
     - Aportes: al inicio de cada mes (el primero es el monto inicial).
-    Devuelve dict con 'trayectoria' (percentiles por mes), 'resumen' y 'metodo'.
+    - Sin historia suficiente: normal con volatilidadRespaldo (anual) si se da.
+    - centrarMediana: el retorno esperado se interpreta como el del escenario
+      CENTRAL (mediana), sumando la mitad de la varianza mensual; si no, con
+      mucha volatilidad la mediana queda por debajo del retorno pedido.
+    Devuelve dict con 'trayectoria' (percentiles por mes), 'resumen', 'metodo'
+    y 'valores' (valor final de cada escenario, para combinar con otras partes).
     """
     meses = int(max(meses, 1))
     rm = retornosMensuales(historico)
@@ -261,9 +267,11 @@ def proyectarInversion(historico, rendimientoEsperadoAnual, montoInicial, aporte
         muestras = desvios[indices].reshape(simulaciones, -1)[:, :meses]
         metodo = f"Remuestreo por bloques de {bloque} meses de {n} retornos mensuales históricos"
     else:
-        sigma = float(rm.std()) if len(rm) > 3 else 0.01
+        sigma = float(rm.std()) if len(rm) > 3 else (volatilidadRespaldo / np.sqrt(12) if volatilidadRespaldo else 0.01)
         muestras = generador.normal(0, sigma, size=(simulaciones, meses))
         metodo = "Distribución normal (historia mensual menor a 24 meses)"
+    if centrarMediana:
+        mu += float(np.var(muestras)) / 2
     retornos = mu + muestras
 
     aportes = np.full(meses, float(aporteMensual))
@@ -309,7 +317,53 @@ def proyectarInversion(historico, rendimientoEsperadoAnual, montoInicial, aporte
         "probabilidadSuperarLiquidez": float(np.mean(final > tabla["liquidez"].iloc[-1])) if "liquidez" in tabla else np.nan,
         "meses": meses,
     }
-    return {"trayectoria": tabla, "resumen": resumen, "metodo": metodo}
+    return {"trayectoria": tabla, "resumen": resumen, "metodo": metodo, "valores": final}
+
+
+def rendimientoAnualizado(valorFinal, montoInicial, meses):
+    """Rendimiento anual compuesto equivalente (fraccion); NaN si no hay monto."""
+    if not montoInicial or montoInicial <= 0 or valorFinal is None or meses <= 0:
+        return np.nan
+    return float((valorFinal / montoInicial) ** (12 / meses) - 1)
+
+
+def proyectarCartera(componentes, meses):
+    """
+    Proyeccion de la CARTERA COMPLETA sumando, escenario por escenario, el
+    valor final de cada parte (acciones, renta fija, liquidez).
+
+    componentes: lista de dicts {clase, nombre, monto, valores} donde 'valores'
+    es el arreglo de valores finales simulados de esa parte (o un numero, para
+    la liquidez). Las simulaciones de cada parte son independientes entre si
+    (se supone correlacion baja entre acciones y bonos de calidad).
+    Devuelve dict con 'resumen' (como proyectarInversion) y 'partes'.
+    """
+    partes = [c for c in componentes if c.get("monto", 0) > 0]
+    if not partes:
+        return None
+    largo = max(len(np.atleast_1d(c["valores"])) for c in partes)
+    total = np.zeros(largo)
+    filas = []
+    for c in partes:
+        valores = np.atleast_1d(np.asarray(c["valores"], dtype=float))
+        valores = np.resize(valores, largo) if len(valores) != largo else valores
+        total += valores
+        mediana = float(np.median(valores))
+        filas.append({"clase": c["clase"], "nombre": c["nombre"], "monto": float(c["monto"]),
+                      "valorMediano": mediana, "gananciaMediana": mediana - float(c["monto"]),
+                      "rendimientoAnual": rendimientoAnualizado(mediana, float(c["monto"]), meses)})
+    invertido = float(sum(c["monto"] for c in partes))
+    mediano = float(np.median(total))
+    resumen = {
+        "montoTotal": invertido, "totalAportado": invertido, "meses": int(meses),
+        "valorMediano": mediano, "valorPesimista": float(np.percentile(total, 10)),
+        "valorOptimista": float(np.percentile(total, 90)),
+        "gananciaMediana": mediano - invertido, "gananciaPesimista": float(np.percentile(total, 10)) - invertido,
+        "gananciaOptimista": float(np.percentile(total, 90)) - invertido,
+        "probabilidadPerdida": float(np.mean(total < invertido)),
+        "rendimientoAnual": rendimientoAnualizado(mediano, invertido, meses),
+    }
+    return {"resumen": resumen, "partes": pd.DataFrame(filas), "valores": total}
 
 
 def compararProyecciones(universo, tablaRanking, montoInicial, aporteMensual, meses, tasaLiquidez):

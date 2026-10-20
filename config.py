@@ -92,6 +92,16 @@ DIAS_PRONOSTICO = leerEntero("DIAS_PRONOSTICO", 30)
 NOTICIAS_LIMITE = leerEntero("NOTICIAS_LIMITE", 50)
 PERFIL_POR_DEFECTO = leerVariable("PERFIL_POR_DEFECTO", "Moderado")
 
+# Proyeccion de la CARTERA COMPLETA (acciones + bonos + liquidez) en el Prescriptivo.
+# La parte de acciones se simula con la historia mensual de este ETF de mercado amplio
+# (o con la del fondo analizado, si es de acciones), re-centrada en un retorno esperado
+# anual SUPUESTO. 7% es una referencia prudente de largo plazo para acciones de EE.UU.
+# (el promedio historico del S&P 500 con dividendos ronda 10%); ajustalo a tu criterio.
+TICKER_RENTA_VARIABLE = leerVariable("TICKER_RENTA_VARIABLE", "VTI")
+RETORNO_ESPERADO_ACCIONES = leerDecimal("RETORNO_ESPERADO_ACCIONES", 0.07)
+# Volatilidad anual de respaldo si no se pudo descargar la historia de acciones
+VOLATILIDAD_ACCIONES_RESPALDO = leerDecimal("VOLATILIDAD_ACCIONES_RESPALDO", 0.16)
+
 # Puerto de la aplicacion Streamlit
 APP_PUERTO = leerEntero("APP_PUERTO", 8501)
 

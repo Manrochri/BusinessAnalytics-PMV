@@ -57,3 +57,38 @@ def test_solo_liquidez_y_plan_de_fondo_de_bonos():
                                capital=10000, fondoElegido="BND")
     assert plan[0]["accion"].startswith("Señal COMPRAR en BND")
     assert any("renta fija a 40%" in p["accion"] for p in plan)
+
+
+def test_cartera_completa_suma_partes_y_el_agresivo_espera_ganar_mas():
+    import numpy as np
+
+    from src.analisisBonos import proyectarCartera, proyectarInversion, rendimientoAnualizado
+    from src.catalogoBonos import PARAMETROS_PERFIL
+
+    def proyectar(perfil, capital=10000, meses=36):
+        p = PARAMETROS_PERFIL[perfil]
+        acciones = proyectarInversion(None, 0.07, capital * p["rentaVariable"], 0, meses, volatilidadRespaldo=0.16, centrarMediana=True)
+        bonos = proyectarInversion(None, 0.045, capital * p["rentaFija"], 0, meses, volatilidadRespaldo=0.04)
+        liquidez = capital * p["liquidez"] * 1.04 ** (meses / 12)
+        return proyectarCartera([
+            {"clase": "Renta variable", "nombre": "Acciones", "monto": capital * p["rentaVariable"], "valores": acciones["valores"]},
+            {"clase": "Renta fija", "nombre": "Bonos", "monto": capital * p["rentaFija"], "valores": bonos["valores"]},
+            {"clase": "Liquidez", "nombre": "Liquidez", "monto": capital * p["liquidez"], "valores": liquidez},
+        ], meses)
+
+    conservador, agresivo = proyectar("Conservador"), proyectar("Agresivo")
+    assert abs(conservador["resumen"]["montoTotal"] - 10000) < 1e-6
+    assert len(conservador["partes"]) == 3 and np.isclose(conservador["partes"]["monto"].sum(), 10000)
+    # Mas acciones: mas ganancia esperada, pero tambien mas dispersion y mas probabilidad de perdida
+    assert agresivo["resumen"]["gananciaMediana"] > conservador["resumen"]["gananciaMediana"]
+    ancho = lambda r: r["gananciaOptimista"] - r["gananciaPesimista"]  # noqa: E731
+    assert ancho(agresivo["resumen"]) > ancho(conservador["resumen"])
+    assert agresivo["resumen"]["probabilidadPerdida"] >= conservador["resumen"]["probabilidadPerdida"]
+    assert abs(rendimientoAnualizado(1157.625, 1000, 36) - 0.05) < 1e-9
+
+
+def test_centrar_mediana_en_el_retorno_supuesto():
+    from src.analisisBonos import proyectarInversion, rendimientoAnualizado
+
+    r = proyectarInversion(None, 0.07, 1000, 0, 120, volatilidadRespaldo=0.16, centrarMediana=True)["resumen"]
+    assert abs(rendimientoAnualizado(r["valorMediano"], 1000, 120) - 0.07) < 0.006

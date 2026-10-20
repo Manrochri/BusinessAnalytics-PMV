@@ -1,3 +1,13 @@
+# Cambios de la versión 2.4
+
+- **Proyección de toda la cartera** en el paso 3 del Prescriptivo: acciones + renta fija elegida + liquidez, con su ganancia central, rango P10–P90 y probabilidad de pérdida. Así un perfil Agresivo (80% acciones) muestra más ganancia esperada que un Conservador, y también más riesgo.
+- Las acciones se simulan con la historia mensual de VTI (o del fondo analizado, si es de acciones), con un escenario central SUPUESTO de 7% anual. Se configura en el `.env`: `TICKER_RENTA_VARIABLE`, `RETORNO_ESPERADO_ACCIONES`, `VOLATILIDAD_ACCIONES_RESPALDO`.
+- El resumen superior separa «Ganancia de toda tu cartera» y «Solo renta fija».
+- Todas las ganancias muestran también su **rendimiento en % anual**, para comparar fondos sin que influya el monto.
+- El informe de IA recibe la proyección de la cartera completa y distingue ambas cifras.
+- Nuevas fuentes de titulares gratuitas (Yahoo Finance RSS y Google News), importancia de variables de referencia en el Predictivo, rediseño visual y claves únicas en gráficos y tablas.
+- 4 pruebas nuevas (43 en total).
+
 # Cambios de la versión 2.3
 
 - **El fondo analizado sale de la agrupación por perfil.** Junto al perfil hay un selector «Fondo a analizar» con los fondos de bonos de ese perfil en el orden del ranking (🟢/🟡/🔴); por defecto, el mejor. VFIAX deja de ser el fondo por defecto y sigue disponible con «Otro ticker…».

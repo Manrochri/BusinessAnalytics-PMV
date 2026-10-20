@@ -11,7 +11,7 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-from config import NOTICIAS_LIMITE
+from config import NOTICIAS_LIMITE, TICKER_RENTA_VARIABLE
 from src.analisisBonos import descargarUniversoBonos, rankingBonos, recortarUniverso
 from src.backtest import backtestSenal
 from src.bonosIndividuales import TICKERS_CURVA, construirCurva
@@ -71,8 +71,21 @@ def descargarComun(usarCache=True, incluirBonos=True):
         # Tasas del Tesoro a 3 meses, 5, 10 y 30 anios: curva actual y su historia
         # (para valorar bonos individuales y simular cambios de tasas)
         "curvaSeries": {t: descargarHistorico(t, "10y", usarCache) for t in TICKERS_CURVA} if incluirBonos else {},
+        # ETF de acciones de referencia: proyeccion de la parte de renta variable de la cartera
+        "rentaVariable": _historicoSeguro(TICKER_RENTA_VARIABLE, "10y", usarCache) if incluirBonos else pd.DataFrame(),
+        "tickerRentaVariable": TICKER_RENTA_VARIABLE,
         "fechaDescargaComun": datetime.now(),
     }
+
+
+def _historicoSeguro(ticker, periodo, usarCache):
+    """Historico o tabla vacia si no se pudo descargar (no detiene la app)."""
+    try:
+        tabla = descargarHistorico(ticker, periodo, usarCache)
+    except Exception as error:  # red o ticker invalido
+        registrarEvento(f"No se pudo descargar {ticker}: {error}", "WARN")
+        return pd.DataFrame()
+    return tabla if tabla is not None else pd.DataFrame()
 
 
 def rankingsComunes(comun, fechaCorte=None):
@@ -226,6 +239,8 @@ def ejecutarAnalisis(base, dias, fechaCorte=None):
             "motivoNoticias": getattr(base["noticias"], "attrs", {}).get("motivo", ""),
             "fuentesNoticias": getattr(base["noticias"], "attrs", {}).get("fuentes", {}),
             "rankingsPorPerfil": rankingsPorPerfil,
+            "rentaVariableReferencia": base.get("rentaVariable", pd.DataFrame()),
+            "tickerRentaVariable": base.get("tickerRentaVariable", TICKER_RENTA_VARIABLE),
             "curvaSeries": base.get("curvaSeries", {}), "curva": construirCurva(base.get("curvaSeries", {})), "backtest": backtest, "resumenBacktest": resumenBacktest,
             "validacion": validarRetrospectivamente(senal, resumenPron, base["historico"], fechaCorte, dias,
                                                     base["benchmark"], metricas.get("volatilidadAnual")),
