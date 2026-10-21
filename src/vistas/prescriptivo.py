@@ -20,6 +20,7 @@ renta fija cuando pertenece al grupo de fondos del perfil; si es otro fondo
 from datetime import datetime
 from html import escape
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -41,6 +42,7 @@ from src.motorPrescriptivo import (
     construirContexto,
     construirPlanAccion,
     evaluarAlertaPerfil,
+    conclusionInversion,
     explicacionDeRespaldo,
     generarExplicacionLLM,
     nombreProveedor,
@@ -92,7 +94,25 @@ def mejorAlternativa(tablaFondos, fondo):
     return None if elegibles.empty else elegibles.iloc[0]
 
 
-def pasoElegirModo(datos, perfil, tablaFondos, resumenFondos):
+def conclusionDelFondo(datos, tablaFondos):
+    """Conclusion «¿invertir o no?» del fondo analizado: su veredicto en el ranking del perfil + el momento (senal)."""
+    veredicto, alternativa = None, None
+    if tablaFondos is not None and not tablaFondos.empty and datos["ticker"] in set(tablaFondos["ticker"]):
+        veredicto = tablaFondos.set_index("ticker").loc[datos["ticker"], "veredicto"]
+        fila = mejorAlternativa(tablaFondos, datos["ticker"])
+        alternativa = fila["ticker"] if fila is not None else None
+    return conclusionInversion(datos["senal"], veredicto, alternativa)
+
+
+def tarjetaConclusion(datos, conclusion):
+    """Tarjeta principal: ¿invertir o no?, con sus dos razones (fondo y momento)."""
+    fondoTxt = conclusion["veredicto"] or "fuera del ranking de tu perfil"
+    return {"etiqueta": f"¿Invertir en {datos['ticker']}?", "valor": conclusion["decision"], "color": conclusion["tono"],
+            "nota": f"Fondo: {fondoTxt.lower() if conclusion['veredicto'] else fondoTxt} · Momento: {conclusion['momento'].lower()}"
+                    + (f" · Alternativa: {conclusion['alternativa']}" if conclusion.get("alternativa") else "")}
+
+
+def pasoElegirModo(datos, perfil, tablaFondos, resumenFondos, conclusion):
     """Fondo de la renta fija y como invertir en el. Devuelve (fondo o None, modo)."""
     encabezadoPaso(1, "Tu fondo y cómo invertir", "Decide si compras el fondo completo o eliges sus bonos uno por uno.")
     if tablaFondos is None or tablaFondos.empty:
@@ -119,8 +139,8 @@ def pasoElegirModo(datos, perfil, tablaFondos, resumenFondos):
              "nota": f"{f['segmento']} · {ICONO_VEREDICTO.get(f['veredicto'], '')} {f['veredicto']}"},
             {"etiqueta": "Rendimiento esperado", "valor": rendimiento,
              "nota": f"Liquidez {formatearPorcentaje(datos['tasaLibre'], 2)}"},
-            {"etiqueta": f"Señal de {datos['ticker']}", "valor": senal["accion"], "destacada": senal["accion"] == "COMPRAR",
-             "nota": f"Puntaje {senal['puntaje']:+.1f}"},
+            {"etiqueta": f"Momento de {datos['ticker']}", "valor": conclusion["momento"],
+             "nota": f"Señal {senal['accion']} · puntaje {senal['puntaje']:+.1f} de ±{senal.get('puntajeMaximo', 0):.1f}"},
         ])
     with columnas[1]:
         st.caption(f"**{f['nombre']}** · fondo mutuo equivalente: {f['fondoMutuo']}. {f['motivo']}")
@@ -135,10 +155,15 @@ def pasoElegirModo(datos, perfil, tablaFondos, resumenFondos):
                           on_click=cambiarFondo)
 
     opciones = [MODO_FONDO, MODO_BONOS, MODO_LIQUIDEZ]
+    claveModo = f"modoRf_{perfil}_{fondo}"
+    if claveModo not in st.session_state:
+        # La opcion inicial sigue la conclusion: si dice «no invertir», arranca en liquidez
+        invertir = conclusion["invertir"] if esAnalizado else f["veredicto"] in ("Recomendable", "Aceptable")
+        st.session_state[claveModo] = MODO_FONDO if invertir else MODO_LIQUIDEZ
     textos = {MODO_FONDO: f"Comprar el fondo {fondo} completo",
               MODO_BONOS: f"Elegir bonos específicos de la cartera de {fondo}",
               MODO_LIQUIDEZ: "No invertir en bonos por ahora (liquidez)"}
-    modo = st.radio("¿Cómo quieres invertir tu renta fija?", opciones, format_func=textos.get, key=f"modoRf_{perfil}_{fondo}",
+    modo = st.radio("¿Cómo quieres invertir tu renta fija?", opciones, format_func=textos.get, key=claveModo,
                     horizontal=True,
                     help="Fondo completo: una sola compra, miles de bonos y reinversión automática. Bonos específicos: tú eliges "
                          "emisor, plazo y calidad, y sabes cuánto recibes si los mantienes al vencimiento (lotes de USD 1 000).")
@@ -229,6 +254,10 @@ def pasoElegirBonos(datos, fondo, perfil, modo):
     seleccion = evaluados.set_index("clave").loc[claves].reset_index() if claves else evaluados.head(0)
     columnas = st.columns([5, 1, 1])
     columnas[0].markdown(f"**Tu compra: {len(seleccion)} bono(s)**" + (" — desmarca «Comprar» para quitar uno." if len(seleccion) else ""))
+    if len(seleccion):
+        costoMinimo = float((seleccion["precio"] / 100 * np.where(seleccion["calidad"].eq("Tesoro EE.UU."), 100, 1000)).sum())
+        st.caption(f"Comprar un lote de cada uno cuesta ≈ {formatearMoneda(costoMinimo)}. En el paso 3 verás cuántos alcanzas "
+                   "con el monto que tu perfil destina a renta fija.")
     columnas[1].button("Sugerencia", key=f"sugerir_{claveSeleccion}", on_click=usarSugerencia,
                        help="Los 3 mejores bonos de emisores distintos", use_container_width=True)
     columnas[2].button("Vaciar", key=f"limpiar_{claveSeleccion}", on_click=limpiar, use_container_width=True)
@@ -300,6 +329,31 @@ def htmlEleccion(datos, fondo, modo, seleccion, tablaFondos, montoRf, meses):
                             f"{detalleFondo} · {plazo}{extra}")
 
 
+def avisoLotes(plan, seleccion, montoRf, capital, pesoRf):
+    """
+    Avisa, ANTES de la proyeccion, cuando el monto no alcanza para comprar todos
+    los bonos marcados: los que no completan un lote quedan en liquidez, y eso
+    cambia el riesgo y la ganancia que se proyectan.
+    """
+    sinLote = plan.loc[plan["lotes"] == 0]
+    if sinLote.empty:
+        return
+    comprados = len(plan) - len(sinLote)
+    costoMinimo = float((plan["precio"] / 100 * plan["lote"]).sum())  # un lote de cada bono marcado
+    capitalNecesario = costoMinimo / pesoRf if pesoRf else np.nan
+    enLiquidez = montoRf - float(plan["costo"].sum())
+    texto = (f"**Con {formatearMoneda(montoRf)} en renta fija solo alcanzas a comprar {comprados} de los {len(seleccion)} bonos que marcaste** "
+             f"(cada bono se compra en lotes de USD 1 000 nominal; USD 100 en el Tesoro). "
+             f"Los otros {len(sinLote)} no se compran y {formatearMoneda(enLiquidez)} quedan en liquidez. "
+             + ("La proyección de abajo es casi la de la liquidez: por eso el rango es estrecho y la probabilidad de pérdida, casi cero. "
+                if enLiquidez > 0.5 * montoRf else
+                f"La proyección de abajo es la de esos {comprados} bono(s) mantenidos al vencimiento, no la de los {len(seleccion)}: "
+                "con tan pocos emisores el resultado depende casi solo de que no caigan en impago. ")
+             + f"Para comprar los {len(seleccion)}, marca menos bonos o sube el capital a unos {formatearMoneda(capitalNecesario)}.")
+    (st.error if comprados == 0 else st.warning)(texto)
+    st.caption("No se compran: " + "; ".join(sinLote["bono"].tolist()) + ".")
+
+
 def pasoProyeccion(datos, perfil, fondo, modo, seleccion, tablaFondos, asignacion):
     """
     Monto, plan de compra y proyeccion. La proyeccion principal es la de TU
@@ -339,6 +393,7 @@ def pasoProyeccion(datos, perfil, fondo, modo, seleccion, tablaFondos, asignacio
         proyeccion = proyectarBonos(plan, sobrante, meses, tasa, plazos, cambios)
         r = proyeccion["resumen"]
         resultado.update(plan=plan, proyeccion=r, valoresRf=proyeccion["valores"])
+        avisoLotes(plan, seleccion, montoRf, capital, pesoRf)
         alternativas.append({"nombre": f"★ Tus {len(seleccion)} bono(s) de {fondo}", "p10": r["valorPesimista"], "p50": r["valorMediano"],
                              "p90": r["valorOptimista"], "invertido": montoRf})
     if fondo:
@@ -363,11 +418,16 @@ def pasoProyeccion(datos, perfil, fondo, modo, seleccion, tablaFondos, asignacio
 
     r = resultado["proyeccion"]
     r["rendimientoAnual"] = rendimientoAnualizado(r["valorMediano"], montoRf, meses)
+    if not resultado["plan"].empty:
+        comprados = int((resultado["plan"]["lotes"] > 0).sum())
+        notaMonto = (f"En bonos {formatearMoneda(r['invertidoEnBonos'])} ({comprados} de {len(seleccion)}) · "
+                     f"en liquidez {formatearMoneda(r['sobrante'])}")
+    else:
+        notaMonto = (f"{len(seleccion)} bono(s) de {fondo}" if not seleccion.empty
+                     else (f"Fondo {fondo} completo" if fondo and modo != MODO_LIQUIDEZ else "Liquidez"))
     st.markdown(f"##### Tu renta fija · {formatearMoneda(montoRf)}")
     filaTarjetas([
-        {"etiqueta": "Monto en renta fija", "valor": formatearMoneda(montoRf),
-         "nota": f"{len(seleccion)} bono(s) de {fondo}" if not seleccion.empty
-                 else (f"Fondo {fondo} completo" if fondo and modo != MODO_LIQUIDEZ else "Liquidez")},
+        {"etiqueta": "Monto en renta fija", "valor": formatearMoneda(montoRf), "nota": notaMonto},
         {"etiqueta": f"Valor en {meses} meses (central)", "valor": formatearMoneda(r["valorMediano"]),
          "nota": f"Ganancia {formatearMoneda(r['gananciaMediana'])} · {formatearPorcentaje(r['rendimientoAnual'], 2)} anual",
          "tono": "positivo" if r["gananciaMediana"] >= 0 else "negativo"},
@@ -392,9 +452,6 @@ def pasoProyeccion(datos, perfil, fondo, modo, seleccion, tablaFondos, asignacio
         })
         st.markdown("**Plan de compra**")
         st.dataframe(vista, use_container_width=True, hide_index=True, key="prescriptivo_dataframe_4")
-        sinLote = plan.loc[plan["lotes"] == 0, "bono"].tolist()
-        if sinLote:
-            st.warning("El monto por bono no alcanza un lote mínimo en: " + "; ".join(sinLote) + ". Elige menos bonos o aumenta el capital.")
         st.caption(
             f"Partes iguales por bono; lo que no alcanza un lote queda en liquidez ({formatearMoneda(resultado['proyeccion']['sobrante'])}). "
             "El precio es el del último reporte del fondo: el de compra será el del mercado ese día. Lotes: USD 100 nominal en el "
@@ -467,7 +524,7 @@ def proyeccionCarteraCompleta(datos, perfil, asignacion, capital, montoRf, meses
 # ---------------------------------------------------------------------------
 # Paso 4: asignacion y plan
 # ---------------------------------------------------------------------------
-def pasoAsignacionYPlan(datos, perfil, asignacion, plan, capital, coherencia, fondo, resumenFondos):
+def pasoAsignacionYPlan(datos, perfil, asignacion, plan, capital, coherencia, fondo, resumenFondos, conclusion=None):
     encabezadoPaso(4, "Tu cartera y el plan de acción", "La asignación completa del perfil con tus elecciones, en porcentaje y en dólares.")
     columnas = st.columns(2)
     with columnas[0]:
@@ -482,7 +539,7 @@ def pasoAsignacionYPlan(datos, perfil, asignacion, plan, capital, coherencia, fo
                    f"{asignacion['ajusteTactico'] * 100:+.0f} pp de {asignacion.get('claseAjuste', 'Renta variable').lower()}.")
     with columnas[1]:
         pasos = construirPlanAccion(datos["senal"], datos["ticker"], datos["riesgo"], perfil, resumenFondos, asignacion,
-                                    plan, capital, coherencia, fondo)
+                                    plan, capital, coherencia, fondo, conclusion)
         st.dataframe(pd.DataFrame(pasos)[["prioridad", "accion", "plazo"]].rename(
             columns={"prioridad": "#", "accion": "Acción", "plazo": "Plazo"}), use_container_width=True, hide_index=True, key="prescriptivo_dataframe_5")
 
@@ -502,14 +559,18 @@ def tarjetaGanancia(proyeccion, cartera):
             "tono": "positivo" if cartera["gananciaMediana"] >= 0 else "negativo"}
 
 
-def dibujarResumen(datos, perfil, fondo, modo, seleccion, tablaFondos, asignacion, proyeccion, coherencia, cartera=None):
-    senal, metricas = datos["senal"], datos["metricas"]
-    st.markdown(insignia(f"Tu decisión · perfil {perfil} · fondo {datos['ticker']}",
-                         COLOR_PERFIL.get(perfil, "azul")),
+def dibujarResumen(datos, perfil, fondo, modo, seleccion, tablaFondos, asignacion, proyeccion, coherencia, cartera=None,
+                   conclusion=None):
+    """
+    Las primeras tarjetas del Prescriptivo, coherentes entre si:
+    1) ¿Invertir o no? (conclusion)  2) en que (tu renta fija)  3) cuanto rinde  4) cuanto ganarias.
+    Debajo, un solo mensaje que explica la conclusion y si tu eleccion la sigue o no.
+    """
+    senal = datos["senal"]
+    conclusion = conclusion or conclusionDelFondo(datos, tablaFondos)
+    st.markdown(insignia(f"Tu decisión · perfil {perfil} · fondo {datos['ticker']}", COLOR_PERFIL.get(perfil, "azul")),
                 unsafe_allow_html=True)
     st.write("")
-    clase = asignacion.get("claseAjuste", "Renta variable")
-    pesoClase = sum(f["peso"] for f in asignacion["filas"] if f["clase"] == clase)
     filaFondo = tablaFondos.set_index("ticker").loc[fondo] if fondo and not tablaFondos.empty else None
     if modo == MODO_BONOS and not seleccion.empty:
         rentaFija = f"{len(seleccion)} bono(s) de {fondo}"
@@ -517,36 +578,49 @@ def dibujarResumen(datos, perfil, fondo, modo, seleccion, tablaFondos, asignacio
         rendimiento = coherencia["rendimientoEsperado"]
     elif fondo and modo != MODO_LIQUIDEZ:
         rentaFija = f"Fondo {fondo} completo"
-        notaRf = f"{filaFondo['segmento']} · {filaFondo['veredicto']}"
-        if modo == MODO_BONOS:
-            notaRf += " · aún sin bonos marcados"
+        notaRf = f"{filaFondo['segmento']} · {filaFondo['veredicto']}" + (" · aún sin bonos marcados" if modo == MODO_BONOS else "")
         rendimiento = filaFondo["rendimientoEsperado"]
     else:
-        rentaFija, notaRf, rendimiento = "Liquidez", "Sin bonos por ahora", datos["tasaLibre"]
+        rentaFija, notaRf, rendimiento = "Liquidez", "Letras del Tesoro / mercado monetario", datos["tasaLibre"]
     filaTarjetas([
-        {"etiqueta": f"Señal · {datos['ticker']}", "valor": senal["accion"], "destacada": senal["accion"] == "COMPRAR",
-         "nota": f"Puntaje {senal['puntaje']:+.1f} · "
-                 + ("renta fija en liquidez" if modo == MODO_LIQUIDEZ and clase == "Renta fija" else f"{pesoClase:.0%} en {clase.lower()}")
-                 + " · horizonte "
-                 f"{calcularHorizonteOptimo(metricas.get('volatilidadAnual'), perfil)}"},
+        tarjetaConclusion(datos, conclusion),
         {"etiqueta": "Tu renta fija", "valor": rentaFija, "nota": notaRf},
         {"etiqueta": "Rendimiento esperado de tu renta fija", "valor": formatearPorcentaje(rendimiento, 2),
          "nota": f"Liquidez: {formatearPorcentaje(datos['tasaLibre'], 2)} anual",
          "tono": "positivo" if not esNulo(rendimiento) and rendimiento > datos["tasaLibre"] else "neutro"},
         tarjetaGanancia(proyeccion, cartera),
     ])
-    if modo == MODO_BONOS and not seleccion.empty:
-        {"coherente": st.success, "cautela": st.warning, "riesgo": st.error}.get(coherencia["estado"], st.info)(coherencia["mensaje"])
-    elif filaFondo is not None and modo != MODO_LIQUIDEZ:
-        (st.error if filaFondo["veredicto"] in ("No recomendable", "Sin datos") else st.info)(
-            f"Renta fija en el fondo {fondo} completo ({filaFondo['veredicto'].lower()} para tu perfil). "
-            + ("Marca bonos en el paso 2 para invertir directo en ellos." if modo == MODO_BONOS
-               else "Si prefieres elegir sus bonos uno por uno, cámbialo en el paso 1."))
+
+    # Un solo mensaje: la conclusion y si lo que elegiste abajo la sigue
+    invierteEnElFondo = fondo == datos["ticker"] and modo != MODO_LIQUIDEZ
+    enLiquidez = modo == MODO_LIQUIDEZ or not fondo
+    eleccion = ("liquidez" if enLiquidez else (f"{len(seleccion)} bono(s) de {fondo}" if modo == MODO_BONOS and not seleccion.empty
+                                                else f"el fondo {fondo} completo"))
+    if conclusion["veredicto"] is not None and not conclusion["invertir"] and invierteEnElFondo:
+        st.error(f"**La conclusión es «{conclusion['decision']}» pero elegiste invertir en {eleccion}.** {conclusion['como']} "
+                 "Cámbialo en el paso 1 si quieres seguir la recomendación.")
+    elif conclusion["veredicto"] is not None and conclusion["invertir"] and enLiquidez and fondo == datos["ticker"]:
+        st.info(f"**La conclusión es «{conclusion['decision']}», pero elegiste mantener tu renta fija en liquidez.** "
+                f"{conclusion['como']} Puedes cambiarlo en el paso 1.")
+    elif fondo != datos["ticker"]:
+        (st.success if conclusion["invertir"] else st.warning)(
+            f"**{conclusion['decision']}** en {datos['ticker']} (tu parte de acciones). {conclusion['como']} "
+            f"Tu renta fija: {eleccion}.")
+    else:
+        (st.success if conclusion["invertir"] else st.warning)(f"**{conclusion['decision']}** · tu elección: {eleccion}. {conclusion['como']}")
+    if modo == MODO_BONOS and not seleccion.empty and coherencia["estado"] != "coherente":
+        {"cautela": st.warning, "riesgo": st.error}.get(coherencia["estado"], st.info)(coherencia["mensaje"])
     alerta = evaluarAlertaPerfil(datos["riesgo"], senal, perfil, datos.get("clasificadorRiesgo"))
     if alerta:
         (st.warning if alerta[0] == "ambar" else st.info)(alerta[1])
-    motivos = "; ".join((senal["motivos"] + senal["alertas"])[:3]) or "ningún factor fuerte a favor o en contra"
-    st.caption(f"**Por qué {senal['accion']} en {datos['ticker']}:** {motivos}. Detalle en «Por qué esta señal», al final.")
+
+    porqueFondo = (f"el fondo es **{conclusion['veredicto'].lower()}** para tu perfil"
+                   + (f" ({filaFondo['motivo'].rstrip('.')})" if filaFondo is not None and fondo == datos["ticker"] else "")
+                   if conclusion["veredicto"] else f"{datos['ticker']} no está en el ranking de fondos de bonos de tu perfil")
+    razones = "; ".join(r.rstrip(".") for r in conclusion["razonesMomento"]) or "sin señales fuertes a favor ni en contra"
+    st.caption(f"**Por qué «{conclusion['decision']}»:** {porqueFondo}; el momento es **{conclusion['momento'].lower()}** "
+               f"({razones}). Horizonte sugerido: {calcularHorizonteOptimo(datos['metricas'].get('volatilidadAnual'), perfil)}. "
+               "Detalle en «Por qué esta señal», al final.")
 
 
 # ---------------------------------------------------------------------------
@@ -558,8 +632,12 @@ def dibujarFactores(datos):
     tabla["Puntos"] = tabla.apply(lambda f: f"{f['puntos']:+.1f}" if f["activo"] else "no participa", axis=1)
     st.dataframe(tabla[["factor", "valor", "Puntos", "nota", "regla"]].rename(
         columns={"factor": "Factor", "valor": "Valor", "nota": "Nota", "regla": "Regla"}), use_container_width=True, hide_index=True, key="prescriptivo_dataframe_6")
-    st.caption(f"Puntaje = suma de los puntos = **{senal['puntaje']:+.1f}** (rango −9.5 a +8.5). ≥ +3 COMPRAR · ≤ −3 REDUCIR · "
-               f"en medio MANTENER. Retorno histórico anualizado de {datos['ticker']}: {formatearPorcentaje(datos['retornoEsperado'], 1, True)}.")
+    st.caption(f"Puntaje = suma de los puntos = **{senal['puntaje']:+.1f}** de un máximo de ±{senal.get('puntajeMaximo', 0):.1f} con los "
+               f"{senal.get('factoresActivos', 0)} factores que participan (intensidad {senal.get('intensidad', 0):+.0%}). "
+               f"COMPRAR (momento favorable) si llega a +{senal.get('umbralPuntos', 0):.1f}; REDUCIR (momento desfavorable) si llega a "
+               f"−{senal.get('umbralPuntos', 0):.1f}; en medio MANTENER (neutral). El umbral es el 35% del máximo alcanzable, así no "
+               "depende de cuántos factores tengan datos. La conclusión de arriba cruza este momento con el veredicto del ranking. "
+               f"Retorno histórico anualizado de {datos['ticker']}: {formatearPorcentaje(datos['retornoEsperado'], 1, True)}.")
 
 
 def dibujarBacktest(datos):
@@ -633,7 +711,8 @@ def dibujarDashboardPrescriptivo(datos, perfil, proveedorInfo):
     resumenSuperior = st.container()  # se llena al final con las elecciones de abajo
     st.divider()
 
-    fondo, modo = pasoElegirModo(datos, perfil, tablaFondos, resumenFondos)
+    conclusion = conclusionDelFondo(datos, tablaFondos)
+    fondo, modo = pasoElegirModo(datos, perfil, tablaFondos, resumenFondos, conclusion)
     st.divider()
     seleccion, _ = pasoElegirBonos(datos, fondo, perfil, modo)
     st.divider()
@@ -647,17 +726,17 @@ def dibujarDashboardPrescriptivo(datos, perfil, proveedorInfo):
     st.divider()
     fondoPlan = fondo if modo != MODO_LIQUIDEZ else None
     pasoAsignacionYPlan(datos, perfil, asignacion, resultado["plan"], resultado["capital"], coherencia, fondoPlan,
-                        resumenFondos if modo != MODO_LIQUIDEZ else dict(resumenFondos, invertir=False))
+                        resumenFondos if modo != MODO_LIQUIDEZ else dict(resumenFondos, invertir=False), conclusion)
 
     with resumenSuperior:
         dibujarResumen(datos, perfil, fondo, modo, seleccion, tablaFondos, asignacion, resultado["proyeccion"], coherencia,
-                       resultado.get("cartera"))
+                       resultado.get("cartera"), conclusion)
 
     decision = {"fondo": fondoPlan, "modo": modo, "seleccion": seleccion, "asignacion": asignacion, "coherencia": coherencia,
-                "proyeccion": resultado["proyeccion"], "proyeccionCartera": resultado.get("cartera")}
+                "proyeccion": resultado["proyeccion"], "proyeccionCartera": resultado.get("cartera"), "conclusion": conclusion}
     st.divider()
     st.markdown("#### Detalles del análisis")
-    with st.expander(f"Por qué esta señal ({datos['senal']['accion']} en {datos['ticker']})"):
+    with st.expander(f"Por qué esta señal (momento {conclusion['momento'].lower()} · {datos['senal']['accion']} en {datos['ticker']})"):
         dibujarFactores(datos)
         for nombre, regla in REGLAS_SENAL:
             st.markdown(f"- **{nombre}:** {regla}")
@@ -675,4 +754,3 @@ def dibujarDashboardPrescriptivo(datos, perfil, proveedorInfo):
         dibujarExplicacionIa(datos, perfil, proveedorInfo, decision)
     st.caption("Proyecto con fines académicos. Las recomendaciones salen de un modelo estadístico y no constituyen asesoría financiera.")
     return decision
-

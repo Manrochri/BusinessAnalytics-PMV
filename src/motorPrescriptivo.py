@@ -49,8 +49,14 @@ AJUSTE_HORIZONTE_POR_PERFIL = {"Conservador": 1, "Moderado": 0, "Agresivo": -1}
 # Ajuste tactico por la senal sobre la clase del fondo analizado (acotado: la senal de UN
 # fondo no debe mover toda la cartera)
 AJUSTE_TACTICO = {"COMPRAR": 0.05, "MANTENER": 0.0, "REDUCIR": -0.05}
-UMBRAL_COMPRAR = 3.0
-UMBRAL_REDUCIR = -3.0
+# Umbral RELATIVO de la senal: proporcion del puntaje maximo alcanzable con los
+# factores que SI participan. Con todos activos (maximo 9.5) equivale a ~±3.3,
+# como antes; con menos factores (lo habitual en fondos de bonos) el umbral baja
+# en proporcion, asi la senal no queda atrapada en MANTENER.
+PUNTOS_MAXIMOS = {"Pronóstico del modelo": 2.0, "Tendencia": 2.0, "Sharpe 12 meses": 1.5,
+                  "Desempeño vs benchmark 12 meses": 1.0, "Nivel de riesgo": 2.0, "Sentimiento de noticias": 1.0}
+UMBRAL_RELATIVO = 0.35
+MINIMO_FACTORES_SENAL = 2
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +91,9 @@ def generarSenal(metricas, resumenPronostico, riesgo, sentimiento, dias=30):
     """
     Traduce indicadores en una senal. Cada factor se registra con su valor,
     su regla y los puntos que aporto (o el motivo por el que no participo).
-    Rango real del puntaje: -9.5 a +8.5. >= 3 COMPRAR, <= -3 REDUCIR.
+    Intensidad = puntaje / maximo alcanzable con los factores activos (-1 a +1).
+    Intensidad >= +0.35 COMPRAR, <= -0.35 REDUCIR, en medio MANTENER (con al
+    menos 2 factores activos; si no, MANTENER por falta de evidencia).
     """
     factores, motivos, alertas = [], [], []
 
@@ -181,17 +189,65 @@ def generarSenal(metricas, resumenPronostico, riesgo, sentimiento, dias=30):
                   "No participa: falta historia de tono (≥ 120 días) y hay menos de 10 titulares recientes.")
 
     puntaje = round(float(sum(f["puntos"] for f in factores)), 1)
-    accion = "COMPRAR" if puntaje >= UMBRAL_COMPRAR else ("REDUCIR" if puntaje <= UMBRAL_REDUCIR else "MANTENER")
     activos = [f for f in factores if f["activo"]]
+    puntajeMaximo = float(sum(PUNTOS_MAXIMOS.get(f["factor"], 1.0) for f in activos))
+    intensidad = puntaje / puntajeMaximo if puntajeMaximo else 0.0
+    umbralPuntos = round(UMBRAL_RELATIVO * puntajeMaximo, 1)
+    if len(activos) < MINIMO_FACTORES_SENAL:
+        accion = "MANTENER"
+    else:
+        accion = "COMPRAR" if intensidad >= UMBRAL_RELATIVO else ("REDUCIR" if intensidad <= -UMBRAL_RELATIVO else "MANTENER")
     signos = [np.sign(f["puntos"]) for f in activos if f["puntos"]]
     concordancia = abs(sum(signos)) / len(activos) if activos else 0.0
     confianza = "Alta" if concordancia >= 0.5 else ("Media" if concordancia >= 0.25 else "Baja")
 
     return {
         "accion": accion, "puntaje": puntaje, "confianza": confianza, "concordancia": concordancia,
+        "puntajeMaximo": puntajeMaximo, "intensidad": float(intensidad), "umbralPuntos": umbralPuntos,
         "factoresActivos": len(activos), "motivos": motivos, "alertas": alertas, "factores": factores,
         "horizonte": calcularHorizonteOptimo(metricas.get("volatilidadAnual"), "Moderado"),
     }
+
+
+MOMENTO_POR_SENAL = {"COMPRAR": "Favorable", "MANTENER": "Neutral", "REDUCIR": "Desfavorable"}
+# (veredicto del ranking, momento) -> (decision, tono, invertir, como)
+MATRIZ_CONCLUSION = {
+    ("Recomendable", "Favorable"): ("Invertir ahora", "verde", True, "Puedes invertir el monto completo de tu renta fija."),
+    ("Recomendable", "Neutral"): ("Invertir", "verde", True, "Invierte en 2 o 3 compras durante el próximo mes."),
+    ("Recomendable", "Desfavorable"): ("Invertir de a poco", "ambar", True,
+                                       "Buen fondo en mal momento: entra en 3 compras mensuales y revisa la tendencia."),
+    ("Aceptable", "Favorable"): ("Invertir con moderación", "ambar", True, "Cumple tu perfil sin destacar: invierte en 2 o 3 compras."),
+    ("Aceptable", "Neutral"): ("Invertir con moderación", "ambar", True, "Cumple tu perfil sin destacar: invierte en 2 o 3 compras."),
+    ("Aceptable", "Desfavorable"): ("Esperar", "naranja", False, "Fondo justo en mal momento: mantén la renta fija en liquidez y revisa en un mes."),
+    ("No recomendable", "Favorable"): ("Mejor otro fondo", "naranja", False,
+                                       "El momento es bueno, pero el fondo no calza con tu perfil: usa la alternativa."),
+    ("No recomendable", "Neutral"): ("No invertir por ahora", "roja", False, "El fondo no calza con tu perfil: usa la alternativa o liquidez."),
+    ("No recomendable", "Desfavorable"): ("No invertir por ahora", "roja", False,
+                                          "Fondo que no calza con tu perfil y en mal momento: usa la alternativa o liquidez."),
+    # Fondos fuera del ranking del perfil (p. ej. de acciones): decide solo el momento
+    (None, "Favorable"): ("Invertir", "verde", True, "Momento favorable para este fondo."),
+    (None, "Neutral"): ("Invertir con moderación", "ambar", True, "Sin señales fuertes: invierte de forma escalonada."),
+    (None, "Desfavorable"): ("Esperar", "naranja", False, "Momento desfavorable: espera a que mejore la tendencia."),
+}
+
+
+def conclusionInversion(senal, veredicto=None, alternativa=None):
+    """
+    UNA conclusion para el usuario, cruzando dos preguntas:
+      - ¿Es buen fondo para mi perfil?  -> veredicto del ranking (3 años)
+      - ¿Es buen momento para entrar?   -> senal (semanas recientes)
+    Devuelve {decision, tono, invertir, como, momento, veredicto, alternativa, porque}.
+    'Sin datos' se trata como 'No recomendable'.
+    """
+    momento = MOMENTO_POR_SENAL.get(senal.get("accion"), "Neutral")
+    clave = "No recomendable" if veredicto == "Sin datos" else veredicto
+    decision, tono, invertir, como = MATRIZ_CONCLUSION.get((clave, momento), MATRIZ_CONCLUSION[(None, momento)])
+    if not invertir and alternativa:
+        como = como.replace("la alternativa", f"la alternativa ({alternativa})")
+    razonesMomento = (senal.get("alertas") if momento == "Desfavorable" else senal.get("motivos")) or []
+    return {"decision": decision, "tono": tono, "invertir": invertir, "como": como, "momento": momento,
+            "veredicto": veredicto, "alternativa": alternativa if not invertir else None,
+            "razonesMomento": razonesMomento[:2]}
 
 
 def calcularRetornoEsperado(metricas, resumenPronostico, dias):
@@ -393,11 +449,18 @@ def validarRetrospectivamente(senal, resumenPronostico, historicoCompleto, fecha
 
 
 def construirPlanAccion(senal, ticker, riesgo, perfil, resumenBonos, asignacion, planCompra=None,
-                        capital=None, coherencia=None, fondoElegido=None):
-    """Plan de accion; el primer paso depende de si el fondo analizado es de bonos o de acciones."""
+                        capital=None, coherencia=None, fondoElegido=None, conclusion=None):
+    """
+    Plan de accion; el primer paso depende de si el fondo analizado es de bonos o
+    de acciones. Con 'conclusion', el primer paso ES la conclusion mostrada arriba.
+    """
     if asignacion.get("claseAjuste") == "Renta fija":
-        return _planFondoDeBonos(senal, ticker, riesgo, resumenBonos, asignacion, planCompra, capital, coherencia, fondoElegido)
-    return _planFondoDeAcciones(senal, ticker, riesgo, resumenBonos, asignacion, planCompra, capital, coherencia, fondoElegido)
+        plan = _planFondoDeBonos(senal, ticker, riesgo, resumenBonos, asignacion, planCompra, capital, coherencia, fondoElegido)
+    else:
+        plan = _planFondoDeAcciones(senal, ticker, riesgo, resumenBonos, asignacion, planCompra, capital, coherencia, fondoElegido)
+    if conclusion:
+        plan[0] = {"accion": f"{conclusion['decision']} en {ticker}: {conclusion['como']}", "plazo": plan[0]["plazo"], "prioridad": 1}
+    return plan
 
 
 def _pasosRentaFija(plan, asignacion, planCompra, coherencia, fondoElegido, resumenBonos):
@@ -624,6 +687,8 @@ def construirContexto(datos, perfil, decision=None):
         },
         "bonosDelPerfil": {"recomendacion": resumenBonos.get("recomendacion"), "ranking": bonos},
         "asignacion": [{"detalle": f["detalle"], "ticker": f["ticker"], "pesoPct": _pct(f["peso"], 1)} for f in asignacion["filas"]],
+        "conclusion": {k: (decision.get("conclusion") or {}).get(k) for k in ("decision", "momento", "veredicto", "como", "alternativa")}
+                      if decision.get("conclusion") else None,
         "seleccionDelUsuario": _contextoSeleccion(decision),
         "proyeccionCarteraCompleta": _contextoCartera(decision.get("proyeccionCartera")),
         "titulares": titulares,

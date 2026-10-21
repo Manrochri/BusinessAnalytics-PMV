@@ -128,6 +128,15 @@ div[data-testid="stWidgetLabel"] p, label p {{
     overflow-wrap: anywhere;
 }}
 .tarjetaValorLargo {{ font-size: 1.3rem; }}
+/* Tarjeta de conclusion: el color de fondo dice la decision */
+.tarjetaVerde {{ background: {COLORES['verdeFondo']}; border: 1px solid #B7E4CF; border-left: 6px solid {COLORES['verde']}; }}
+.tarjetaVerde .tarjetaValor {{ color: #13704A; }}
+.tarjetaAmbar {{ background: {COLORES['ambarFondo']}; border: 1px solid #F3D9A6; border-left: 6px solid {COLORES['ambar']}; }}
+.tarjetaAmbar .tarjetaValor {{ color: #9A5B00; }}
+.tarjetaNaranja {{ background: #FDEEE3; border: 1px solid #F5C9A8; border-left: 6px solid #D9692B; }}
+.tarjetaNaranja .tarjetaValor {{ color: #A2461A; }}
+.tarjetaRoja {{ background: {COLORES['rojoFondo']}; border: 1px solid #F5C2C0; border-left: 6px solid {COLORES['rojo']}; }}
+.tarjetaRoja .tarjetaValor {{ color: #A8322E; }}
 .tarjetaValorPositivo {{ color: {COLORES['verde']}; }}
 .tarjetaValorNegativo {{ color: {COLORES['rojo']}; }}
 .tarjetaNota {{
@@ -288,7 +297,7 @@ def mostrarCabecera(subtitulo="Proyecto académico"):
         st.caption(str(error))
 
 
-def tarjetaMetrica(etiqueta, valor, nota=None, tono="neutro", destacada=False):
+def tarjetaMetrica(etiqueta, valor, nota=None, tono="neutro", destacada=False, color=None):
     """
     Devuelve el HTML de una tarjeta de indicador.
     tono: 'neutro', 'positivo' o 'negativo'.
@@ -302,6 +311,9 @@ def tarjetaMetrica(etiqueta, valor, nota=None, tono="neutro", destacada=False):
         if len(str(valor)) > 14:  # textos largos (p. ej. "3 bono(s) de ANGL") en un tamano menor
             claseValor += " tarjetaValorLargo"
         claseTarjeta = "tarjeta tarjetaDestacada" if destacada else "tarjeta"
+        if color in ("verde", "ambar", "naranja", "roja"):  # tarjeta de conclusion
+            claseTarjeta = f"tarjeta tarjeta{color.capitalize()}"
+            claseValor = "tarjetaValor" + (" tarjetaValorLargo" if len(str(valor)) > 14 else "")
         textoNota = f'<div class="tarjetaNota">{escape(str(nota))}</div>' if nota else ""
         etiqueta, valor = escape(str(etiqueta)), escape(str(valor))
 

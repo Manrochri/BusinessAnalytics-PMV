@@ -92,3 +92,37 @@ def test_centrar_mediana_en_el_retorno_supuesto():
 
     r = proyectarInversion(None, 0.07, 1000, 0, 120, volatilidadRespaldo=0.16, centrarMediana=True)["resumen"]
     assert abs(rendimientoAnualizado(r["valorMediano"], 1000, 120) - 0.07) < 0.006
+
+
+def _senalAngl(sharpe=-1.12, sobre=False, ret6=-0.034):
+    import numpy as np
+
+    from src.motorPrescriptivo import generarSenal
+
+    metricas = {"volatilidadAnual": 0.08, "sobreMedia200": sobre, "retorno6m": ret6, "sharpe12m": sharpe,
+                "benchmarkComparable": True, "diferencialBenchmark12m": 0.0}
+    return generarSenal(metricas, {"rentabilidadProyectada": np.nan}, {"categoria": "Bajo", "puntaje": 3.4},
+                        {"fuenteSenal": None, "diasTono": 0, "recientes": 0}, 30)
+
+
+def test_senal_recalibrada_sale_de_mantener_con_pocos_factores():
+    senal = _senalAngl()  # caso de la captura: -2.5 puntos con 4 factores activos
+    assert senal["puntaje"] == -2.5 and senal["puntajeMaximo"] == 6.5
+    assert senal["accion"] == "REDUCIR"          # antes: MANTENER (umbral fijo de -3)
+    assert _senalAngl(sharpe=0.5, sobre=True, ret6=-0.01)["accion"] == "MANTENER"  # tendencia mixta, Sharpe neutro
+    assert _senalAngl(sharpe=1.4, sobre=True, ret6=0.05)["accion"] == "COMPRAR"
+
+
+def test_conclusion_cruza_veredicto_y_momento():
+    from src.motorPrescriptivo import conclusionInversion
+
+    reducir, mantener = {"accion": "REDUCIR", "alertas": ["Tendencia bajista."]}, {"accion": "MANTENER", "motivos": []}
+    c = conclusionInversion(reducir, "No recomendable", "JNK")
+    assert (c["decision"], c["tono"], c["invertir"], c["momento"], c["alternativa"]) == \
+        ("No invertir por ahora", "roja", False, "Desfavorable", "JNK")
+    assert "JNK" in c["como"] and c["razonesMomento"] == ["Tendencia bajista."]
+    c = conclusionInversion(mantener, "Recomendable", "JNK")
+    assert c["decision"] == "Invertir" and c["invertir"] and c["alternativa"] is None
+    assert conclusionInversion(reducir, "Recomendable")["decision"] == "Invertir de a poco"
+    assert conclusionInversion(mantener, "Sin datos")["invertir"] is False     # sin datos = no recomendable
+    assert conclusionInversion({"accion": "COMPRAR"}, None)["decision"] == "Invertir"  # fondo fuera del ranking
