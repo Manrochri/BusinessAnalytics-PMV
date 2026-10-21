@@ -250,6 +250,21 @@ def conclusionInversion(senal, veredicto=None, alternativa=None):
             "razonesMomento": razonesMomento[:2]}
 
 
+def conclusionParaDatos(datos, perfil):
+    """
+    Conclusion «¿invertir o no?» del fondo analizado a partir del analisis y el
+    perfil (la misma que muestra el Prescriptivo): veredicto del fondo en el
+    ranking del perfil + momento de la senal, y la mejor alternativa del perfil.
+    """
+    tabla, _ = (datos.get("rankingsPorPerfil") or {}).get(perfil, (pd.DataFrame(), {}))
+    veredicto, alternativa = None, None
+    if tabla is not None and not tabla.empty and datos["ticker"] in set(tabla["ticker"]):
+        veredicto = tabla.set_index("ticker").loc[datos["ticker"], "veredicto"]
+        otros = tabla.loc[tabla["veredicto"].isin(["Recomendable", "Aceptable"]) & (tabla["ticker"] != datos["ticker"])]
+        alternativa = otros.iloc[0]["ticker"] if not otros.empty else None
+    return conclusionInversion(datos["senal"], veredicto, alternativa)
+
+
 def calcularRetornoEsperado(metricas, resumenPronostico, dias):
     """
     Retorno anual esperado del fondo. Si el modelo tiene habilidad, combina
@@ -634,6 +649,7 @@ def construirContexto(datos, perfil, decision=None):
     sentimiento = datos["sentimiento"]
     tablaBonos, resumenBonos = datos.get("rankingsPorPerfil", {}).get(perfil, (pd.DataFrame(), {}))
     decision = decision or {}
+    conclusion = decision.get("conclusion") or conclusionParaDatos(datos, perfil)
     asignacion = decision.get("asignacion") or construirAsignacion(perfil, senal, tablaBonos,
                                                                    claseSenal=datos.get("claseFondo", "Renta variable"))
     titulares = datos["titulares"].head(5).to_dict("records") if not datos["titulares"].empty else []
@@ -681,14 +697,17 @@ def construirContexto(datos, perfil, decision=None):
                         "titulares30diasPromedio": numeroSeguro(sentimiento.get("promedioReciente"), 3),
                         "titularesRecientes": sentimiento.get("recientes")},
         "senal": {
-            "accion": senal["accion"], "puntaje": senal["puntaje"], "confianza": senal["confianza"],
+            "queMide": "Solo el MOMENTO de entrada (semanas recientes); no es la recomendación final, que está en 'conclusion'.",
+            "momento": MOMENTO_POR_SENAL.get(senal["accion"], "Neutral"),
+            "accion": senal["accion"], "puntaje": senal["puntaje"], "puntajeMaximo": senal.get("puntajeMaximo"),
+            "confianza": senal["confianza"],
             "factores": [{"factor": f["factor"], "valor": f["valor"], "puntos": f["puntos"], "participa": f["activo"]}
                          for f in senal["factores"]],
         },
         "bonosDelPerfil": {"recomendacion": resumenBonos.get("recomendacion"), "ranking": bonos},
         "asignacion": [{"detalle": f["detalle"], "ticker": f["ticker"], "pesoPct": _pct(f["peso"], 1)} for f in asignacion["filas"]],
-        "conclusion": {k: (decision.get("conclusion") or {}).get(k) for k in ("decision", "momento", "veredicto", "como", "alternativa")}
-                      if decision.get("conclusion") else None,
+        # LA recomendacion principal (la primera tarjeta del Prescriptivo)
+        "conclusion": {k: conclusion.get(k) for k in ("decision", "invertir", "veredicto", "momento", "como", "alternativa", "razonesMomento")},
         "seleccionDelUsuario": _contextoSeleccion(decision),
         "proyeccionCarteraCompleta": _contextoCartera(decision.get("proyeccionCartera")),
         "titulares": titulares,
@@ -747,6 +766,11 @@ INSTRUCCION_SISTEMA = (
     "Los campos que terminan en 'Pct' ya están en puntos porcentuales (13.51 significa 13.51%). "
     "Si 'fondo.noticiasDeOtroTicker' no es nulo, aclara que las noticias son de ese ETF equivalente. "
     "Si un factor tiene 'participa': false, no lo uses como argumento. "
+    "La recomendación principal es SIEMPRE 'conclusion.decision' (p. ej. «Invertir», «No invertir por ahora»): empieza por ella "
+    "y explícala con sus dos razones, el veredicto del fondo para el perfil ('conclusion.veredicto') y el momento de entrada "
+    "('conclusion.momento'). 'senal.accion' (COMPRAR/MANTENER/REDUCIR) es un dato técnico del momento: no lo presentes como la "
+    "recomendación ni digas «la señal es MANTENER» como conclusión; si lo mencionas, tradúcelo a momento favorable, neutral o desfavorable. "
+    "Si 'conclusion.alternativa' no es nula, menciónala. "
     "Escribe en español claro. Indica que el análisis es educativo y no constituye asesoría financiera. "
     "Responde directamente, sin mostrar razonamiento interno."
 )
@@ -764,8 +788,8 @@ Escribe exactamente estas cuatro secciones en markdown:
 ### Cómo se ha comportado el fondo
 Dos o tres frases con los indicadores.
 
-### Qué factores explican la señal
-Explica la señal y sus factores tal como vienen en 'senal.factores' (puntos de cada uno, y cuáles no participan y por qué). No la justifiques más allá de esos factores.
+### ¿Invertir o no?
+Empieza con 'conclusion.decision' y su explicación ('conclusion.como'). Luego sus dos razones: el veredicto del fondo para el perfil y el momento de entrada, explicado con los factores de 'senal.factores' (puntos de cada uno, y cuáles no participan y por qué). No la justifiques más allá de esos datos.
 
 ### Bonos para tu perfil y asignación
 Si 'seleccionDelUsuario' no es nulo, explica el fondo y los bonos específicos que eligió (emisor, vencimiento, rendimiento esperado, veredicto y su motivo), su coherencia con el perfil y la proyección. Si no, resume 'bonosDelPerfil'. Luego la asignación. Distingue la ganancia de la renta fija ('seleccionDelUsuario.proyeccion') de la de toda la cartera ('proyeccionCarteraCompleta'), que incluye las acciones.
@@ -947,21 +971,25 @@ def chatearConLLM(mensajes, contexto, perfil="Moderado", proveedorInfo=None):
     return None, proveedor
 
 
-def explicacionDeRespaldo(datos, perfil):
+def explicacionDeRespaldo(datos, perfil, conclusion=None):
     """Explicacion construida con reglas para cuando no hay proveedor de IA."""
     metricas, senal = datos["metricas"], datos["senal"]
+    conclusion = conclusion or conclusionParaDatos(datos, perfil)
     _, resumenBonos = datos.get("rankingsPorPerfil", {}).get(perfil, (pd.DataFrame(), {}))
     lineas = [
         "### Cómo se ha comportado el fondo",
         f"Retorno anualizado de {formatearPorcentaje(metricas.get('retornoAnual'))}, volatilidad de "
         f"{formatearPorcentaje(metricas.get('volatilidadAnual'))} y peor caída de {formatearPorcentaje(metricas.get('maxDrawdown'))}. "
         f"En los últimos 12 meses rindió {formatearPorcentaje(metricas.get('retorno12m'), 1, True)}.",
-        "\n### Qué factores explican la señal",
-        f"La señal es **{senal['accion']}** (puntaje {senal['puntaje']}, confianza {senal['confianza'].lower()}).",
+        "\n### ¿Invertir o no?",
+        f"**{conclusion['decision']}.** {conclusion['como']}",
+        f"- Fondo para tu perfil: {conclusion['veredicto'] or 'fuera del ranking de tu perfil'}.",
+        f"- Momento de entrada: {conclusion['momento'].lower()} (puntaje {senal['puntaje']:+.1f} de ±{senal.get('puntajeMaximo', 0):.1f}). "
+        "Factores del momento:",
     ]
     for factor in senal["factores"]:
         estado = f"{factor['puntos']:+.1f} puntos" if factor["activo"] else f"no participa ({factor['nota']})"
-        lineas.append(f"- {factor['factor']}: {factor['valor']} → {estado}")
+        lineas.append(f"  - {factor['factor']}: {factor['valor']} → {estado}")
     lineas += ["\n### Bonos para tu perfil y asignación", resumenBonos.get("recomendacion", "Sin datos de bonos."),
                "\n### Riesgos a vigilar"]
     alertas = senal.get("alertas") or [f"El riesgo del fondo es {datos['riesgo'].get('categoria')}.",

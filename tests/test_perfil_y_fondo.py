@@ -126,3 +126,15 @@ def test_conclusion_cruza_veredicto_y_momento():
     assert conclusionInversion(reducir, "Recomendable")["decision"] == "Invertir de a poco"
     assert conclusionInversion(mantener, "Sin datos")["invertir"] is False     # sin datos = no recomendable
     assert conclusionInversion({"accion": "COMPRAR"}, None)["decision"] == "Invertir"  # fondo fuera del ranking
+
+
+def test_conclusion_compartida_por_prescriptivo_asesor_e_informe():
+    from src.motorPrescriptivo import INSTRUCCION_SISTEMA, conclusionParaDatos
+
+    ranking = pd.DataFrame([{"ticker": "JNK", "veredicto": "Recomendable"}, {"ticker": "ANGL", "veredicto": "No recomendable"}])
+    datos = {"ticker": "ANGL", "senal": {"accion": "MANTENER", "motivos": [], "alertas": []},
+             "rankingsPorPerfil": {"Agresivo": (ranking, {})}}
+    c = conclusionParaDatos(datos, "Agresivo")
+    assert (c["decision"], c["alternativa"], c["momento"]) == ("No invertir por ahora", "JNK", "Neutral")
+    assert conclusionParaDatos(datos, "Conservador")["veredicto"] is None  # fuera del ranking de ese perfil
+    assert "conclusion.decision" in INSTRUCCION_SISTEMA  # el LLM no debe presentar MANTENER como la recomendacion

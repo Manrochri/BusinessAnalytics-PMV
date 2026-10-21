@@ -5,14 +5,24 @@ Dashboard 4 — chat de seguimiento sobre el análisis ya calculado.
 
 import streamlit as st
 
-from src.motorPrescriptivo import chatearConLLM, construirContexto, nombreProveedor, proveedorListo
+from src.motorPrescriptivo import (
+    chatearConLLM,
+    conclusionParaDatos,
+    construirContexto,
+    nombreProveedor,
+    proveedorListo,
+)
+
+ICONO_DECISION = {"verde": "🟢", "ambar": "🟡", "naranja": "🟠", "roja": "🔴"}
 
 
 def dibujarChatAsesor(datos, perfil, proveedorInfo, decision=None):
     """Chat con Qwen3 (o Gemini de respaldo) sobre los datos del análisis y el perfil elegido."""
     proveedor, estado, _ = proveedorInfo
     marca = f"{datos['fechaCorte']:%Y%m%d}" if datos.get("fechaCorte") is not None else "actual"
-    claveHistorial = f"chat_{datos['ticker']}_{marca}"
+    # Un historial por fondo, perfil y semana: al cambiar de perfil cambia la conclusion
+    claveHistorial = f"chat_{datos['ticker']}_{perfil}_{marca}"
+    conclusion = (decision or {}).get("conclusion") or conclusionParaDatos(datos, perfil)
     st.session_state.setdefault(claveHistorial, [])
 
     columnas = st.columns([4, 1])
@@ -32,8 +42,13 @@ def dibujarChatAsesor(datos, perfil, proveedorInfo, decision=None):
             st.markdown(mensaje["content"])
     if not st.session_state[claveHistorial]:
         with st.chat_message("assistant"):
-            st.markdown(f"Hola. Ya revisé el análisis de **{datos['ticker']}**: la señal es **{datos['senal']['accion']}**. "
-                        "Puedes preguntarme *¿por qué esa señal?*, *¿por qué me sugieres estos bonos?* o *¿cuánto podría ganar?*")
+            fondoTxt = (f"el fondo es **{conclusion['veredicto'].lower()}** para tu perfil" if conclusion["veredicto"]
+                        else f"{datos['ticker']} no está en el ranking de fondos de bonos de tu perfil")
+            alternativa = f" Como alternativa, te sugiero **{conclusion['alternativa']}**." if conclusion.get("alternativa") else ""
+            st.markdown(f"Hola. Ya revisé el análisis de **{datos['ticker']}** para tu perfil **{perfil}**. "
+                        f"Mi conclusión: {ICONO_DECISION.get(conclusion['tono'], '')} **{conclusion['decision']}**: "
+                        f"{fondoTxt} y el momento de entrada es **{conclusion['momento'].lower()}**.{alternativa}\n\n"
+                        "Puedes preguntarme *¿por qué esa conclusión?*, *¿qué bonos me convienen?* o *¿cuánto podría ganar?*")
 
     pregunta = st.chat_input("Escribe tu pregunta...")
     if pregunta:

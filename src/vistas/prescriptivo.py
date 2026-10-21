@@ -42,7 +42,7 @@ from src.motorPrescriptivo import (
     construirContexto,
     construirPlanAccion,
     evaluarAlertaPerfil,
-    conclusionInversion,
+    conclusionParaDatos,
     explicacionDeRespaldo,
     generarExplicacionLLM,
     nombreProveedor,
@@ -92,16 +92,6 @@ def mejorAlternativa(tablaFondos, fondo):
     """Mejor fondo recomendable/aceptable del perfil distinto de 'fondo' (fila o None)."""
     elegibles = tablaFondos.loc[tablaFondos["veredicto"].isin(["Recomendable", "Aceptable"]) & (tablaFondos["ticker"] != fondo)]
     return None if elegibles.empty else elegibles.iloc[0]
-
-
-def conclusionDelFondo(datos, tablaFondos):
-    """Conclusion «¿invertir o no?» del fondo analizado: su veredicto en el ranking del perfil + el momento (senal)."""
-    veredicto, alternativa = None, None
-    if tablaFondos is not None and not tablaFondos.empty and datos["ticker"] in set(tablaFondos["ticker"]):
-        veredicto = tablaFondos.set_index("ticker").loc[datos["ticker"], "veredicto"]
-        fila = mejorAlternativa(tablaFondos, datos["ticker"])
-        alternativa = fila["ticker"] if fila is not None else None
-    return conclusionInversion(datos["senal"], veredicto, alternativa)
 
 
 def tarjetaConclusion(datos, conclusion):
@@ -567,7 +557,7 @@ def dibujarResumen(datos, perfil, fondo, modo, seleccion, tablaFondos, asignacio
     Debajo, un solo mensaje que explica la conclusion y si tu eleccion la sigue o no.
     """
     senal = datos["senal"]
-    conclusion = conclusion or conclusionDelFondo(datos, tablaFondos)
+    conclusion = conclusion or conclusionParaDatos(datos, perfil)
     st.markdown(insignia(f"Tu decisión · perfil {perfil} · fondo {datos['ticker']}", COLOR_PERFIL.get(perfil, "azul")),
                 unsafe_allow_html=True)
     st.write("")
@@ -678,7 +668,7 @@ def dibujarExplicacionIa(datos, perfil, proveedorInfo, decision):
     proveedor, estado, _ = proveedorInfo
     if not proveedorListo(estado):
         st.warning(f"**{nombreProveedor(proveedor)}**: {estado['mensaje']}")
-        st.markdown(explicacionDeRespaldo(datos, perfil))
+        st.markdown(explicacionDeRespaldo(datos, perfil, decision.get("conclusion")))
         return
     seleccion = decision.get("seleccion")
     huella = "-".join(sorted(seleccion["clave"])) if seleccion is not None and not seleccion.empty else decision.get("fondo") or "liquidez"
@@ -687,7 +677,7 @@ def dibujarExplicacionIa(datos, perfil, proveedorInfo, decision):
     if st.button(f"Explicar mi decisión con {nombreProveedor(proveedor)}", type="primary"):
         with st.spinner(f"{nombreProveedor(proveedor)} está redactando el informe..."):
             texto, usado, sospechosas = generarExplicacionLLM(construirContexto(datos, perfil, decision), perfil, proveedorInfo)
-            st.session_state[clave] = {"texto": texto or explicacionDeRespaldo(datos, perfil),
+            st.session_state[clave] = {"texto": texto or explicacionDeRespaldo(datos, perfil, decision.get("conclusion")),
                                        "proveedor": usado if texto else None, "sospechosas": sospechosas}
     guardado = st.session_state.get(clave)
     if not guardado:
@@ -711,7 +701,7 @@ def dibujarDashboardPrescriptivo(datos, perfil, proveedorInfo):
     resumenSuperior = st.container()  # se llena al final con las elecciones de abajo
     st.divider()
 
-    conclusion = conclusionDelFondo(datos, tablaFondos)
+    conclusion = conclusionParaDatos(datos, perfil)  # la misma que usan el Asesor IA y el informe
     fondo, modo = pasoElegirModo(datos, perfil, tablaFondos, resumenFondos, conclusion)
     st.divider()
     seleccion, _ = pasoElegirBonos(datos, fondo, perfil, modo)
