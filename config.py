@@ -1,10 +1,26 @@
 """
 config.py
-Carga la configuracion del proyecto desde el archivo .env.
-Ninguna credencial debe escribirse directamente en el codigo.
+Carga la configuracion del proyecto. Ninguna credencial se escribe en el codigo.
+
+Puente de configuracion: el mismo codigo funciona en local y en Streamlit
+Community Cloud, sin borrar ni renombrar nada. Cada variable se busca en este
+orden y gana la primera que tenga valor:
+
+  1. Variables de entorno del sistema (las que define el servidor o la terminal).
+  2. Archivo .env de la raiz del proyecto (desarrollo local; no se sube a Git).
+  3. Secretos de Streamlit (st.secrets):
+       - en Community Cloud, los que pegas en Settings -> Secrets;
+       - en local, .streamlit/secrets.toml (opcional).
+     Se aceptan en el nivel raiz (CLAVE = "valor") o dentro de cualquier
+     seccion ([fundscope] CLAVE = "valor"); el nivel raiz tiene prioridad.
+  4. El valor por defecto escrito en este archivo.
+
+Asi, en tu computadora sigue mandando el .env, y en la nube (donde el .env no
+existe porque esta en .gitignore) mandan los secretos de Streamlit.
 """
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -15,17 +31,73 @@ RUTA_DATOS = RUTA_BASE / "data"
 RUTA_CACHE = RUTA_DATOS / "cache"
 RUTA_SALIDAS = RUTA_DATOS / "salidas"
 
-# Carga de variables de entorno (sin crear carpetas al importar: eso lo hace
-# utilidades.asegurarCarpeta() justo antes de escribir)
-load_dotenv(RUTA_BASE / ".env")
+# 1 y 2: variables del sistema y .env. override=False: lo que ya define el sistema
+# (o la nube) no se pisa con el .env. Sin crear carpetas al importar: eso lo hace
+# utilidades.asegurarCarpeta() justo antes de escribir.
+ARCHIVO_ENV = RUTA_BASE / ".env"
+load_dotenv(ARCHIVO_ENV, override=False)
+
+_SECRETOS = None  # se leen una sola vez, la primera vez que se necesitan
+
+
+def _secretosStreamlit():
+    """
+    Secretos de Streamlit aplanados en {CLAVE: "valor"}. Devuelve {} si
+    Streamlit no esta instalado, si no hay secrets.toml (notebook, pruebas,
+    local sin secretos) o si el archivo no se puede leer: nunca detiene la app.
+    """
+    global _SECRETOS
+    if _SECRETOS is not None:
+        return _SECRETOS
+    _SECRETOS = {}
+    try:
+        import streamlit as st
+
+        secretos = st.secrets
+        # Comprueba si existe algun secrets.toml SIN mostrar errores en la pagina
+        if hasattr(secretos, "load_if_toml_exists") and not secretos.load_if_toml_exists():
+            return _SECRETOS
+        raiz, secciones = {}, {}
+        for clave, valor in secretos.items():
+            if isinstance(valor, Mapping):
+                for subclave, subvalor in valor.items():
+                    if not isinstance(subvalor, Mapping):
+                        secciones.setdefault(str(subclave), subvalor)
+            else:
+                raiz[str(clave)] = valor
+        _SECRETOS = {k: str(v) for k, v in {**secciones, **raiz}.items() if v is not None}
+    except Exception:  # sin streamlit, sin archivo o TOML invalido: se ignoran los secretos
+        _SECRETOS = {}
+    return _SECRETOS
+
+
+def origenVariable(nombre):
+    """De donde sale una variable: 'entorno o .env', 'secretos de Streamlit' o 'valor por defecto'."""
+    if str(os.getenv(nombre) or "").strip():
+        return "entorno o .env"
+    if str(_secretosStreamlit().get(nombre) or "").strip():
+        return "secretos de Streamlit"
+    return "valor por defecto"
+
+
+def describirFuentesConfiguracion():
+    """Texto corto con las fuentes de configuracion activas (para la barra lateral)."""
+    fuentes = []
+    if ARCHIVO_ENV.exists():
+        fuentes.append(".env")
+    if _secretosStreamlit():
+        fuentes.append("secretos de Streamlit")
+    return " + ".join(fuentes) if fuentes else "valores por defecto (sin .env ni secretos)"
 
 
 def leerVariable(nombre, valorPorDefecto=None):
-    """Lee una variable de entorno y devuelve un valor por defecto si no existe."""
+    """Lee una variable: entorno/.env, luego secretos de Streamlit, luego el valor por defecto."""
     valor = os.getenv(nombre)
     if valor is None or str(valor).strip() == "":
+        valor = _secretosStreamlit().get(nombre)
+    if valor is None or str(valor).strip() == "":
         return valorPorDefecto
-    return valor.strip()
+    return str(valor).strip()
 
 
 def leerEntero(nombre, valorPorDefecto):

@@ -26,6 +26,7 @@ from config import (
     PERIODO_HISTORICO,
     SEMANAS_EN_MEMORIA,
     TICKER_NOTICIAS_POR_DEFECTO,
+    describirFuentesConfiguracion,
 )
 from src.analisis import descargarComun, descargarFondo, ejecutarAnalisis, rankingsComunes
 from src.catalogoBonos import benchmarkParaFondo
@@ -94,6 +95,7 @@ def dibujarBarraLateral():
         else:
             st.error(f"**{etiqueta}**\n\n{estado['mensaje']}")
             st.caption("Sin proveedor listo: el informe se arma con reglas y el chat no está disponible.")
+        st.caption(f"Configuración leída de: {describirFuentesConfiguracion()}.")
     return parametros, ejecutar, proveedorInfo, contenedores
 
 
