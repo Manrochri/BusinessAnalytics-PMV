@@ -7,7 +7,7 @@ y el RANKING DE BONOS del perfil elegido en la parte superior.
 import pandas as pd
 import streamlit as st
 
-from src.catalogoBonos import PARAMETROS_PERFIL, PERFILES, PESOS_RANKING, UMBRAL_ACEPTABLE, UMBRAL_RECOMENDABLE
+from src.catalogoBonos import PARAMETROS_PERFIL, nombreFondo, PERFILES, PESOS_RANKING, UMBRAL_ACEPTABLE, UMBRAL_RECOMENDABLE
 from src.estilos import abrirPanel, insignia
 from src.graficos import (
     graficarComparativoBenchmark,
@@ -25,38 +25,41 @@ from src.vistas.bonos import (
     botonCargarCartera,
     filtrarBonos,
     resumenFondoBonos,
+    explicarBonosVsFondo,
     tablaEmisores,
     vistaBonos,
     vistaEmisores,
 )
-from src.vistas.comunes import filaTarjetas, formatearTablaPorcentajes, mostrarRecomendacion
+from src.vistas.comunes import filaTarjetas, formatearTablaPorcentajes, mostrarRecomendacion, tablaDatos, tablaHtml
 
 
 def dibujarIndicadores(datos):
+    """Las 4 cifras clave arriba; el resto, plegado."""
     metricas, riesgo = datos["metricas"], datos["riesgo"]
     filaTarjetas([
-        {"etiqueta": "Valor actual", "valor": formatearMoneda(metricas["valorActual"])},
-        {"etiqueta": "Retorno anual", "valor": formatearPorcentaje(metricas["retornoAnual"], 1, True),
-         "tono": "positivo" if (metricas["retornoAnual"] or 0) >= 0 else "negativo", "nota": "Periodo completo"},
+        {"etiqueta": "Valor actual", "valor": formatearMoneda(metricas["valorActual"]),
+         "nota": f"Último dato {datos['fechaDatoFinal']:%d/%m/%Y}"},
         {"etiqueta": "Retorno 12 meses", "valor": formatearPorcentaje(metricas["retorno12m"], 1, True),
-         "tono": "positivo" if not esNulo(metricas["retorno12m"]) and metricas["retorno12m"] >= 0 else "negativo"},
-        {"etiqueta": "Volatilidad anual", "valor": formatearPorcentaje(metricas["volatilidadAnual"])},
+         "tono": "positivo" if not esNulo(metricas["retorno12m"]) and metricas["retorno12m"] >= 0 else "negativo",
+         "nota": f"Anual del periodo: {formatearPorcentaje(metricas['retornoAnual'], 1, True)}"},
+        {"etiqueta": "Riesgo", "valor": riesgo["categoria"], "nota": f"Volatilidad {formatearPorcentaje(metricas['volatilidadAnual'])} anual"},
+        {"etiqueta": "Peor caída", "valor": formatearPorcentaje(metricas["maxDrawdown"], 1), "tono": "negativo",
+         "nota": "Desde un máximo"},
     ])
-    st.write("")
-    filaTarjetas([
-        {"etiqueta": "Sharpe (12 meses)", "valor": formatearNumero(metricas["sharpe12m"]),
-         "nota": f"Tasa libre {formatearPorcentaje(metricas['tasaLibre'], 2)}"},
-        {"etiqueta": "Beta", "valor": formatearNumero(metricas["beta"]), "nota": f"vs {datos['benchmark']}"},
-        {"etiqueta": "VaR 95% diario", "valor": formatearPorcentaje(metricas["varDiario95"], 1), "tono": "negativo"},
-        {"etiqueta": "Máxima caída", "valor": formatearPorcentaje(metricas["maxDrawdown"], 1), "tono": "negativo",
-         "nota": f"Riesgo {riesgo['categoria']} · {riesgo['puntaje']}/10"},
-    ])
+    with st.expander("Más indicadores (Sharpe, beta, VaR)"):
+        filaTarjetas([
+            {"etiqueta": "Sharpe 12 meses", "valor": formatearNumero(metricas["sharpe12m"]),
+             "nota": f"Tasa libre {formatearPorcentaje(metricas['tasaLibre'], 2)}"},
+            {"etiqueta": "Beta", "valor": formatearNumero(metricas["beta"]), "nota": f"vs {datos['benchmark']}"},
+            {"etiqueta": "VaR 95% diario", "valor": formatearPorcentaje(metricas["varDiario95"], 1), "tono": "negativo"},
+            {"etiqueta": "Puntaje de riesgo", "valor": f"{riesgo['puntaje']}/10", "nota": "Volatilidad, caída y beta"},
+        ])
 
 
 def dibujarBenchmark(datos):
     metricas = datos["metricas"]
     columnas = st.columns([3, 2])
-    with columnas[0], abrirPanel(f"Rentabilidad acumulada vs {datos['benchmark']} (base 100)"):
+    with columnas[0], abrirPanel(f"Comparado con {nombreFondo(datos['benchmark'])}"):
         if datos["comparativo"].empty or "benchmark" not in datos["comparativo"]:
             st.info("No hay datos del benchmark para comparar.")
         else:
@@ -68,23 +71,23 @@ def dibujarBenchmark(datos):
                          f"{formatearPorcentaje(abs(diferencial), 1)} acumulado desde la primera fecha común.")
                 st.markdown(insignia(texto, "verde" if diferencial >= 0 else "roja"), unsafe_allow_html=True)
             if not datos.get("benchmarkComparable", True):
-                st.warning(f"{datos['benchmark']} no incluye dividendos y el fondo sí: la diferencia está inflada. "
-                           "Usa ^SP500TR o un ETF equivalente.")
+                st.caption("Ojo: esta referencia no incluye dividendos y el fondo sí, así que la diferencia se ve mayor.")
     with columnas[1], abrirPanel("Rentabilidad por periodo"):
         st.plotly_chart(graficarRentabilidadPeriodos(datos["rentabilidadPeriodos"]), use_container_width=True, key="descriptivo_plotly_chart_2")
 
-    columnas = st.columns(2)
-    with columnas[0], abrirPanel("Distribución de retornos diarios"):
-        st.plotly_chart(graficarDistribucionRetornos(datos["historico"]), use_container_width=True, key="descriptivo_plotly_chart_3")
-    with columnas[1], abrirPanel("Composición del riesgo"):
-        st.plotly_chart(graficarRadarRiesgo(datos["riesgo"].get("componentes", {})), use_container_width=True, key="descriptivo_plotly_chart_4")
-        st.caption("Volatilidad 40% · caída máxima 35% · beta 25%. Sharpe y sentimiento entran por separado en la señal.")
+    with st.expander("Distribución de retornos y composición del riesgo"):
+        columnas = st.columns(2)
+        with columnas[0]:
+            st.plotly_chart(graficarDistribucionRetornos(datos["historico"]), use_container_width=True, key="descriptivo_plotly_chart_3")
+        with columnas[1]:
+            st.plotly_chart(graficarRadarRiesgo(datos["riesgo"].get("componentes", {})), use_container_width=True, key="descriptivo_plotly_chart_4")
+            st.caption("Volatilidad 40% · caída máxima 35% · beta 25%.")
 
 
 def dibujarRankingBonos(datos, perfil):
     """Ranking de los bonos del perfil: cuáles conviene comprar y si conviene invertir o no."""
     tabla, resumen = datos.get("rankingsPorPerfil", {}).get(perfil, (pd.DataFrame(), {}))
-    with abrirPanel(f"Fondos de bonos para el perfil {perfil}: ranking y bonos que contienen"):
+    with abrirPanel(f"Ranking de fondos de bonos · perfil {perfil}"):
         if datos.get("fechaCorte") is not None:
             st.caption("En la evaluación por semana, los precios de los bonos se recortan a esa fecha; "
                        "su rendimiento por distribuciones es el de hoy.")
@@ -92,13 +95,6 @@ def dibujarRankingBonos(datos, perfil):
             st.info("No hay datos de bonos. Presiona «Actualizar datos».")
             return
         mostrarRecomendacion(resumen.get("recomendacion", ""), resumen.get("tono"))
-        if datos["ticker"] in set(tabla["ticker"]):
-            fila = tabla.set_index("ticker").loc[datos["ticker"]]
-            st.caption(f"El fondo analizado, **{datos['ticker']}**, ocupa el puesto **#{int(fila['puesto'])}** de {len(tabla)} "
-                       f"en este perfil ({fila['veredicto'].lower()}). Cámbialo arriba, en «Fondo a analizar».")
-        else:
-            st.caption(f"El fondo analizado, **{datos['ticker']}**, no pertenece a este grupo de fondos de bonos: "
-                       "se compara aquí con los fondos de bonos de tu perfil.")
 
         columnas = st.columns([2, 3])
         with columnas[0]:
@@ -107,23 +103,27 @@ def dibujarRankingBonos(datos, perfil):
             vista = formatearTablaPorcentajes(
                 tabla, ["rendimientoEsperado", "prima", "volatilidad", "caidaMaxima", "retorno6m"], decimales=2
             )
-            vista.insert(0, "analizado", vista["ticker"].map(lambda t: "◀ analizado" if t == datos["ticker"] else ""))
-            vista = vista[["analizado", "puesto", "ticker", "segmento", "veredicto", "puntaje", "rendimientoEsperado", "prima",
-                           "volatilidad", "caidaMaxima", "retorno6m", "fondoMutuo", "motivo"]].rename(columns={
-                "analizado": "", "puesto": "#", "ticker": "Fondo", "segmento": "Tipo de bonos", "veredicto": "Veredicto", "puntaje": "Puntaje",
-                "rendimientoEsperado": "Rend. esperado", "prima": "Prima vs liquidez", "volatilidad": "Volatilidad 3a",
-                "caidaMaxima": "Caída máx. 3a", "retorno6m": "Retorno 6m", "fondoMutuo": "Fondo mutuo equiv.",
-                "motivo": "Motivo",
-            })
-            st.dataframe(vista, use_container_width=True, hide_index=True, key="descriptivo_dataframe_6")
+            vista["ticker"] = vista["ticker"].map(lambda t: ("▶ " if t == datos["ticker"] else "") + nombreFondo(t))
+            columnasVista = {"ticker": "Fondo", "veredicto": "Veredicto", "rendimientoEsperado": "Rinde", "volatilidad": "Volatilidad",
+                             "motivo": "Por qué"}
+            tablaHtml(vista[list(columnasVista)].rename(columns=columnasVista),
+                      destacar=lambda fila: str(fila["Fondo"]).startswith("▶"))
+            st.caption("▶ = el fondo que estás viendo. «Rinde» = lo que se espera que pague al año.")
 
         p = PARAMETROS_PERFIL[perfil]
-        st.caption(
-            f"Liquidez de referencia: {resumen.get('tasaLibre', 0):.2%} (letras del Tesoro). Rend. esperado = rendimiento "
-            "por distribuciones menos la pérdida esperada por impagos. Tolerancias del perfil: volatilidad ≤ "
-            f"{p['volatilidadMaxima']:.0%}, caída ≥ {p['caidaTolerada']:.0%}, prima ≥ {p['primaMinima']:+.2%}."
-        )
-        with st.expander("Cómo se calcula el puntaje y el veredicto"):
+        with st.expander("Tabla completa y cómo se calcula el veredicto"):
+            completa = formatearTablaPorcentajes(tabla, ["rendimientoEsperado", "prima", "volatilidad", "caidaMaxima", "retorno6m"], 2)
+            completa = completa[["puesto", "ticker", "segmento", "veredicto", "puntaje", "rendimientoEsperado", "prima",
+                                 "volatilidad", "caidaMaxima", "retorno6m", "fondoMutuo"]].rename(columns={
+                "puesto": "#", "ticker": "Fondo", "segmento": "Tipo de bonos", "veredicto": "Veredicto", "puntaje": "Puntaje",
+                "rendimientoEsperado": "Rend. esperado", "prima": "Prima vs liquidez", "volatilidad": "Volatilidad 3a",
+                "caidaMaxima": "Caída máx. 3a", "retorno6m": "Retorno 6m", "fondoMutuo": "Fondo mutuo equiv."})
+            tablaHtml(completa)
+            st.caption(
+                f"Liquidez de referencia: {resumen.get('tasaLibre', 0):.2%}. Rend. esperado = rendimiento por distribuciones menos "
+                f"la pérdida esperada por impagos. Tolerancias del perfil: volatilidad ≤ {p['volatilidadMaxima']:.0%}, "
+                f"caída ≥ {p['caidaTolerada']:.0%}, prima ≥ {p['primaMinima']:+.2%}."
+            )
             st.markdown(
                 "**Puntaje (0-100)**, con datos de los últimos 3 años: "
                 + " · ".join(f"{k} {v:.0%}" for k, v in PESOS_RANKING.items())
@@ -133,8 +133,9 @@ def dibujarRankingBonos(datos, perfil):
                 "bajista (bajo su media de 200 días y −3% en 6 meses).\n\n"
                 "Los fondos mutuos equivalentes son de referencia: verifica disponibilidad y montos mínimos con la gestora."
             )
-        dibujarExploradorBonos(datos, perfil, tabla)
-        with st.expander("Ver el resumen de los otros perfiles"):
+        with st.expander("Bonos y emisores dentro de cada fondo"):
+            dibujarExploradorBonos(datos, perfil, tabla)
+        with st.expander("Los otros perfiles"):
             for otro in PERFILES:
                 if otro == perfil:
                     continue
@@ -144,12 +145,11 @@ def dibujarRankingBonos(datos, perfil):
 
 def dibujarExploradorBonos(datos, perfil, tablaFondos):
     """Evaluacion individual de los bonos y emisores que componen un fondo del perfil."""
-    st.markdown("**Dentro de cada fondo: bonos y emisores, uno por uno**")
     opciones = list(tablaFondos["ticker"])
     fondo = st.selectbox(
         "Fondo a explorar", opciones, key=f"explorarFondo_{perfil}_{datos['ticker']}",
         index=opciones.index(datos["ticker"]) if datos["ticker"] in opciones else 0,
-        format_func=lambda t: f"{t} — {tablaFondos.set_index('ticker').loc[t, 'segmento']}",
+        format_func=nombreFondo,
     )
     if not botonCargarCartera(fondo, f"cargarCartera_desc_{fondo}"):
         return
@@ -158,15 +158,16 @@ def dibujarExploradorBonos(datos, perfil, tablaFondos):
         st.info(error)
         return
     resumenFondoBonos(evaluados, meta)
+    explicarBonosVsFondo(datos, fondo, perfil, evaluados)
     pestanas = st.tabs(["Por emisor (empresa / entidad)", "Por bono", "Mapa rendimiento / plazo"])
     with pestanas[0]:
         emisores = tablaEmisores(evaluados, f"{fondo}_{perfil}")
-        st.dataframe(vistaEmisores(emisores), use_container_width=True, hide_index=True, key="descriptivo_dataframe_7")
+        tablaDatos(vistaEmisores(emisores), key="descriptivo_dataframe_7")
         st.caption("Un emisor es Recomendable si tiene al menos un bono recomendable para tu perfil. "
                    "Calidad (peor) = la calidad implícita más baja entre sus bonos en el fondo.")
     with pestanas[1]:
         filtrados = filtrarBonos(evaluados, f"desc_{fondo}")
-        st.dataframe(vistaBonos(filtrados), use_container_width=True, hide_index=True, key="descriptivo_dataframe_8")
+        tablaDatos(vistaBonos(filtrados), key="descriptivo_dataframe_8")
     with pestanas[2]:
         st.plotly_chart(graficarMapaBonos(evaluados), use_container_width=True, key="descriptivo_plotly_chart_9")
     st.caption(
@@ -184,69 +185,50 @@ def dibujarSentimiento(datos):
         fuenteSerie = getattr(serie, "attrs", {}).get("fuente", "")
         participa = {"tono": "Participa en la señal (tono de prensa)", "titulares": "Participa en la señal (titulares)"}.get(
             sentimiento.get("fuenteSenal"), "No participa en la señal")
+        z = sentimiento.get("zTono")
         filaTarjetas([
-            {"etiqueta": "Tono de prensa · 30 días", "valor": formatearNumero(sentimiento.get("tonoReciente"), 2),
-             "nota": f"Promedio del año: {formatearNumero(sentimiento.get('tonoAnual'), 2)}"},
-            {"etiqueta": "Frente a su último año", "valor": (f"{sentimiento['zTono']:+.1f} desv." if not esNulo(sentimiento.get("zTono")) else "N/D"),
-             "nota": participa},
-            {"etiqueta": "Historia de tono", "valor": f"{sentimiento.get('diasTono', 0)} días",
-             "nota": "Mínimo para la señal: 120"},
+            {"etiqueta": "Tono de la prensa (30 días)",
+             "valor": "Sin historia" if esNulo(z) else ("Más positivo" if z >= 1 else ("Más negativo" if z <= -1 else "Normal")),
+             "nota": (f"{z:+.1f} desv. frente a su último año · " if not esNulo(z) else f"{sentimiento.get('diasTono', 0)} de 120 días · ")
+                     + participa.lower()},
             {"etiqueta": "Titulares recientes", "valor": str(sentimiento.get("recientes", 0)),
-             "nota": f"Promedio {formatearNumero(sentimiento.get('promedioReciente'), 2)} · {sentimiento.get('totalNoticias', 0)} acumulados"},
+             "nota": f"Promedio {formatearNumero(sentimiento.get('promedioReciente'), 2)} (−1 a +1)"},
         ])
-        st.write("")
         if not serie.empty:
             st.plotly_chart(graficarSentimiento(serie), use_container_width=True, key="descriptivo_plotly_chart_10")
-        if fuenteSerie.startswith("Tono"):
-            st.caption(
-                f"Tono promedio diario de la prensa en inglés sobre {datos.get('temaTono', 'el tema del fondo')} según GDELT "
-                "(escala de −100 a +100; en la práctica entre −10 y +10 y casi siempre negativa). Por eso se compara con su "
-                "propio último año y no con cero. El tono de cada día se usa a partir del día de mercado siguiente. "
-                "Completa la historia desde la barra lateral («Historia del tono de prensa»)."
-            )
-        else:
-            st.caption("Sin historia de tono de prensa: el gráfico muestra el promedio de los titulares por día de mercado. "
-                       "Completa la historia desde la barra lateral («Historia del tono de prensa»).")
+        st.caption(("Ánimo diario de la prensa internacional sobre este tipo de fondo; se compara con su propio último año."
+                    if fuenteSerie.startswith("Tono") else "Ánimo promedio de los titulares de cada día.")
+                   + " Para más historia: menú lateral → «Historia de noticias».")
 
         titulares = datos["titulares"]
         if titulares is not None and not titulares.empty:
             fuentes = datos.get("fuentesNoticias") or {}
-            st.markdown(f"**Titulares recientes** de {datos.get('tickerNoticias')}"
-                        + (f" y {datos['ticker']}" if datos.get("tickerNoticias") != datos["ticker"] else "")
-                        + f" y del tema {datos.get('temaTono', '')}")
-            if fuentes:
-                st.caption("Fuentes de esta actualización: " + ", ".join(f"{k} ({v})" for k, v in fuentes.items()) + ".")
-            tabla = titulares.copy()
-            tabla["fecha"] = pd.to_datetime(tabla["fecha"]).dt.strftime("%d/%m/%Y")
-            tabla["sentimiento"] = tabla["sentimiento"].round(3)
-            tabla = tabla.rename(columns={"fecha": "Fecha", "titulo": "Titular", "fuente": "Fuente",
-                                          "sentimiento": "Puntaje", "etiqueta": "Clasificación", "url": "Enlace"})
-            st.dataframe(tabla, use_container_width=True, hide_index=True,
-                         column_config={"Enlace": st.column_config.LinkColumn("Enlace", display_text="Abrir")}, key="descriptivo_dataframe_11")
-            st.caption("Puntaje de los titulares: VADER (−1 a +1), un analizador general que no entiende jerga "
-                       "financiera fina; por eso pesa menos que el tono de prensa.")
-        elif datos.get("fechaCorte") is not None:
-            st.info("No hay titulares guardados hasta esa fecha: las fuentes gratuitas solo entregan lo reciente, "
-                    "así que la historia de titulares empieza el día de tu primera actualización y crece con cada una.")
-        else:
-            st.info("No llegaron titulares de ninguna fuente gratuita (Yahoo Finance, su RSS ni Google News). "
-                    "Revisa tu conexión y presiona «Actualizar datos» con «Usar datos en caché» desactivado."
-                    + (f"\n\nDetalle: {datos['motivoNoticias']}" if datos.get("motivoNoticias") else ""))
+            with st.expander(f"Ver los {len(titulares)} titulares más recientes"):
+                tabla = titulares.copy()
+                tabla["fecha"] = pd.to_datetime(tabla["fecha"]).dt.strftime("%d/%m/%Y")
+                tabla["sentimiento"] = tabla["sentimiento"].round(2)
+                tabla = tabla[["fecha", "titulo", "sentimiento", "fuente", "url"]].rename(columns={
+                    "fecha": "Fecha", "titulo": "Titular", "sentimiento": "Puntaje", "fuente": "Fuente", "url": "Enlace"})
+                tablaDatos(tabla, column_config={"Enlace": st.column_config.LinkColumn("Enlace", display_text="Abrir")}, key="descriptivo_dataframe_11")
+                st.caption("Puntaje de −1 (muy negativo) a +1 (muy positivo)."
+                           + (" Fuentes: " + ", ".join(f"{k} ({v})" for k, v in fuentes.items()) + "." if fuentes else ""))
+        elif datos.get("fechaCorte") is None:
+            st.caption("No llegaron titulares de las fuentes gratuitas. Prueba «Actualizar datos» sin caché."
+                       + (f" Detalle: {datos['motivoNoticias']}" if datos.get("motivoNoticias") else ""))
 
 
 def dibujarDashboardDescriptivo(datos, perfil):
     """Pestaña Descriptivo."""
     dibujarIndicadores(datos)
-    st.write("")
-    with abrirPanel(f"Evolución del NAV — {datos['ficha'].get('nombre', datos['ticker'])}"):
+    with abrirPanel(f"Valor del fondo · {datos['ficha'].get('nombre', datos['ticker'])}"):
         st.plotly_chart(graficarEvolucionNav(datos["historico"]), use_container_width=True, key="descriptivo_plotly_chart_12")
     dibujarBenchmark(datos)
     dibujarRankingBonos(datos, perfil)
     dibujarSentimiento(datos)
     posiciones = datos.get("posiciones")
     if posiciones is not None and not posiciones.empty:
-        with abrirPanel("Principales posiciones del fondo"):
+        with st.expander("Principales posiciones del fondo"):
             tabla = posiciones.copy()
             tabla["peso"] = (tabla["peso"] * 100).round(2).astype(str) + "%"
-            st.dataframe(tabla.rename(columns={"ticker": "Ticker", "nombre": "Nombre", "peso": "Peso"}),
-                         use_container_width=True, hide_index=True, key="descriptivo_dataframe_13")
+            tablaDatos(tabla.rename(columns={"ticker": "Símbolo", "nombre": "Nombre", "peso": "Peso"})[["Nombre", "Peso", "Símbolo"]],
+                       key="descriptivo_dataframe_13")

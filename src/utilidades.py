@@ -226,3 +226,23 @@ def numeroSeguro(valor, decimales=4):
     if math.isinf(numero):
         return None
     return round(numero, decimales)
+
+
+SIGLAS_EMISOR = {"US", "USA", "LLC", "LP", "PLC", "NV", "SA", "AG", "SE", "AB", "BV", "II", "III", "IV", "REIT", "ETF", "UK",
+                 "AT&T", "IBM", "HP", "CVS", "BHP", "ING", "HSBC", "UBS", "BNP", "JPMORGAN", "SPDR"}
+
+
+def nombreLegible(texto):
+    """'PARAMOUNT GLOBAL' -> 'Paramount Global'; respeta siglas conocidas (LLC, PLC, USA...)."""
+    palabras = []
+    for palabra in str(texto or "").split():
+        limpia = palabra.strip(",.").upper()
+        if limpia in SIGLAS_EMISOR:
+            palabras.append("JPMorgan" if limpia == "JPMORGAN" else palabra.upper())
+        elif palabras and limpia in {"OF", "AND", "THE", "DE", "DEL", "LA", "Y", "FOR"}:
+            palabras.append(palabra.lower())
+        elif palabra.isupper() or palabra.islower():
+            palabras.append(palabra.capitalize() if "&" not in palabra else palabra.upper())
+        else:
+            palabras.append(palabra)
+    return " ".join(palabras)

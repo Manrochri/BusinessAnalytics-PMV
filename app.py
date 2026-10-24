@@ -26,14 +26,12 @@ from config import (
     PERIODO_HISTORICO,
     SEMANAS_EN_MEMORIA,
     TICKER_NOTICIAS_POR_DEFECTO,
-    describirFuentesConfiguracion,
 )
 from src.analisis import descargarComun, descargarFondo, ejecutarAnalisis, rankingsComunes
 from src.catalogoBonos import benchmarkParaFondo
 from src.datosNoticias import completarHistoriaTono, sugerirTickerNoticias, temaTonoPrensa
-from src.estilos import aplicarEstilos, mostrarCabecera
-from src.modeloClasificacionRiesgo import COLUMNAS_PREDICTORAS_RIESGO
-from src.motorPrescriptivo import determinarProveedorActivo, nombreProveedor, proveedorListo
+from src.estilos import aplicarEstilos, flujoPasos, mostrarCabecera, tituloSeccion
+from src.motorPrescriptivo import conclusionParaDatos, determinarProveedorActivo, proveedorListo
 from src.preparacionDatos import listarFechasSemanales
 from src.utilidades import formatearNumero, formatearPorcentaje
 from src.vistas.asesor import dibujarChatAsesor
@@ -46,6 +44,7 @@ st.set_page_config(page_title="FundScope | Analítica de Fondos Mutuos", page_ic
                    initial_sidebar_state="expanded")
 
 PERIODOS = ["1y", "2y", "5y", "10y", "max"]
+NOMBRES_PERIODO = {"1y": "1 año", "2y": "2 años", "5y": "5 años", "10y": "10 años", "max": "Toda la historia"}
 FONDOS_EN_MEMORIA = 6
 
 
@@ -59,61 +58,47 @@ def dibujarBarraLateral():
     se llenan despues, cuando ya se sabe que fondo se analiza.
     """
     with st.sidebar:
-        st.markdown("### Configuración del análisis")
-        st.caption("El perfil y el fondo se eligen arriba, en la página.")
-        parametros = {
-            "benchmarkManual": st.text_input(
-                "Benchmark (opcional)", value="", placeholder="Automático según el perfil",
-                help="Vacío = automático: BIL (letras del Tesoro) en Conservador y AGG (mercado de bonos) en Moderado y "
-                     f"Agresivo; {BENCHMARK_POR_DEFECTO} para fondos fuera del catálogo. Usa índices de retorno total o ETF.",
-            ).strip().upper(),
-            "tickerNoticias": st.text_input("Ticker para noticias (opcional)", value=TICKER_NOTICIAS_POR_DEFECTO,
-                                            placeholder="Se detecta automáticamente si se deja vacío").strip().upper(),
-            "periodo": st.selectbox("Periodo histórico", PERIODOS,
-                                    index=PERIODOS.index(PERIODO_HISTORICO) if PERIODO_HISTORICO in PERIODOS else 2,
-                                    help="Con 10 años el backtest y el clasificador de riesgo tienen más historia."),
-            "dias": st.slider("Horizonte de pronóstico (días hábiles)", 5, 90, DIAS_PRONOSTICO, step=5),
-        }
+        st.markdown("### Opciones")
+        ejecutar = st.button("🔄 Actualizar datos", type="primary", use_container_width=True,
+                             help="Vuelve a descargar los precios y las noticias más recientes.")
         contenedores = {"semana": st.container()}
-        parametros["usarCache"] = st.checkbox("Usar datos en caché", value=True,
-                                              help="Desactívalo para forzar una descarga nueva de precios, titulares y tono de prensa.")
-        st.divider()
-        ejecutar = st.button("Actualizar datos", type="primary", use_container_width=True,
-                             help="Vuelve a leer los datos comunes y los del fondo elegido.")
+        with st.expander("Opciones avanzadas"):
+            parametros = {
+                "periodo": st.selectbox("Años de historia a analizar", PERIODOS, format_func=NOMBRES_PERIODO.get,
+                                        index=PERIODOS.index(PERIODO_HISTORICO) if PERIODO_HISTORICO in PERIODOS else 2),
+                "dias": st.slider("Pronóstico a cuántos días hábiles", 5, 90, DIAS_PRONOSTICO, step=5),
+                "benchmarkManual": st.text_input("Comparar contra (símbolo, opcional)", value="",
+                                                 placeholder="Automático según tu perfil").strip().upper(),
+                "tickerNoticias": TICKER_NOTICIAS_POR_DEFECTO.strip().upper() if TICKER_NOTICIAS_POR_DEFECTO else "",
+            }
+            parametros["usarCache"] = not st.checkbox("Descargar todo de nuevo (más lento)", value=False)
         contenedores["tono"] = st.container()
 
         st.divider()
-        st.markdown("### Proveedor de IA generativa")
-        reverificar = st.button("Volver a verificar", use_container_width=True)
+        reverificar = st.button("Revisar asistente de IA", use_container_width=True)
         proveedorInfo = determinarProveedorActivo(forzarVerificacion=reverificar)
-        proveedor, estado, forzado = proveedorInfo
-        etiqueta = nombreProveedor(proveedor) + (" · forzado en .env" if forzado else "")
+        _, estado, _ = proveedorInfo
         if proveedorListo(estado):
-            st.success(f"**{etiqueta}**\n\n{estado['mensaje']}")
-        elif estado.get("disponible"):
-            st.warning(f"**{etiqueta}**\n\n{estado['mensaje']}")
+            st.success("✅ Asistente de IA activo")
         else:
-            st.error(f"**{etiqueta}**\n\n{estado['mensaje']}")
-            st.caption("Sin proveedor listo: el informe se arma con reglas y el chat no está disponible.")
-        st.caption(f"Configuración leída de: {describirFuentesConfiguracion()}.")
+            st.warning("Asistente de IA no disponible: el informe se arma con reglas y el chat queda desactivado.")
     return parametros, ejecutar, proveedorInfo, contenedores
 
 
 def dibujarHistoriaTono(contenedor, ticker, tickerNoticias):
     """Expander para completar meses anteriores del tono de prensa del fondo analizado."""
-    with contenedor, st.expander("Historia del tono de prensa"):
+    with contenedor, st.expander("Historia de noticias"):
         tema = temaTonoPrensa(ticker, tickerNoticias or sugerirTickerNoticias(ticker))
-        st.caption(f"Tono diario de la prensa sobre {tema} (tema de {ticker}; GDELT, gratis y sin clave). Cada análisis suma "
-                   "los últimos 3 meses; aquí puedes completar meses anteriores (una consulta cada ~5 s). Con ≥ 120 días "
-                   "participa en la señal, y con historia suficiente entra al modelo.")
-        meses = st.number_input("Meses a completar", min_value=3, max_value=120, value=24, step=3, key="mesesTono")
-        if st.button("Completar historia del tono", use_container_width=True):
-            barra = st.progress(0.0, text="Consultando GDELT...")
+        st.caption("Descarga meses anteriores del ánimo de la prensa sobre este fondo. Con más historia, las noticias "
+                   "pesan en la recomendación y en el pronóstico. Tarda unos 5 segundos por cada 3 meses.")
+        meses = st.number_input("Meses a descargar", min_value=3, max_value=120, value=24, step=3, key="mesesTono")
+        if st.button("Descargar historia", use_container_width=True):
+            barra = st.progress(0.0, text="Descargando noticias…")
             r = completarHistoriaTono(tema, int(meses), lambda f, t: barra.progress(min(f, 1.0), text=t))
             textoDesde = f" desde el {r['desde']:%d/%m/%Y}" if r["desde"] is not None else ""
             (st.warning if r["mensaje"] else st.success)(
-                f"{r['diasNuevos']} días nuevos en {r['consultas']} consulta(s); {r['total']} días acumulados{textoDesde}. "
-                + (r["mensaje"] + " " if r["mensaje"] else "") + "Presiona «Actualizar datos» para usarlos."
+                f"Listo: {r['total']} días de noticias{textoDesde}. Presiona «Actualizar datos» para usarlos."
+                if not r["mensaje"] else "No se pudo descargar todo. Intenta de nuevo en unos minutos."
             )
 
 
@@ -122,10 +107,10 @@ def dibujarSelectorSemana(contenedor, entrada):
     with contenedor:
         fechas = listarFechasSemanales(entrada["base"]["historico"])
         seleccion = st.selectbox(
-            "Semana evaluada", ["actual"] + [f"{f:%Y-%m-%d}" for f in fechas],
-            format_func=lambda v: "Última disponible (hoy)" if v == "actual" else f"Semana al {pd.Timestamp(v):%d/%m/%Y}",
+            "Ver cómo estaba en una fecha pasada", ["actual"] + [f"{f:%Y-%m-%d}" for f in fechas],
+            format_func=lambda v: "Hoy" if v == "actual" else f"Semana del {pd.Timestamp(v):%d/%m/%Y}",
             key=f"semana_{entrada['base']['ticker']}",
-            help="Recalcula todo con los datos disponibles hasta ese día, sin volver a descargar.",
+            help="Muestra la recomendación como si fuera esa fecha y qué pasó después.",
         )
     return None if seleccion == "actual" else pd.Timestamp(seleccion)
 
@@ -178,45 +163,33 @@ def dibujarGranularidad(datos):
     """Frecuencia, rango y cobertura reales de los datos usados."""
     info = datos.get("granularidad", {})
     filaTarjetas([
-        {"etiqueta": "Frecuencia del NAV", "valor": info.get("frecuenciaNav", "N/D")},
-        {"etiqueta": "Observaciones del NAV", "valor": formatearNumero(info.get("observacionesNav"), 0),
+        {"etiqueta": "Precios diarios", "valor": formatearNumero(info.get("observacionesNav"), 0),
          "nota": f"{formatearFecha(info.get('desdeNav'))} → {formatearFecha(info.get('hastaNav'))}"},
-        {"etiqueta": "Noticias usadas", "valor": formatearNumero(info.get("totalNoticias"), 0),
+        {"etiqueta": "Noticias", "valor": formatearNumero(info.get("totalNoticias"), 0),
          "nota": f"{formatearFecha(info.get('desdeNoticias'))} → {formatearFecha(info.get('hastaNoticias'))}"},
-        {"etiqueta": "Historial con noticias", "valor": formatearPorcentaje(info.get("coberturaNoticias"), 1),
-         "nota": f"{info.get('diasConNoticias', 0)} días distintos"},
+        {"etiqueta": "Días con noticias", "valor": formatearPorcentaje(info.get("coberturaNoticias"), 0),
+         "nota": f"{info.get('diasConNoticias', 0)} días"},
     ])
-    modelo = datos.get("modelo", {})
-    if modelo.get("columnas"):
-        st.caption(f"**Variables de los modelos de regresión ({len(modelo['columnas'])}):** " + ", ".join(modelo["columnas"]))
-    st.caption(f"**Variables del clasificador de riesgo ({len(COLUMNAS_PREDICTORAS_RIESGO)}):** " + ", ".join(COLUMNAS_PREDICTORAS_RIESGO))
-    st.caption("**Bonos:** precios diarios de los últimos 5 años; métricas del ranking en los últimos 3 años.")
 
 
 def mostrarBienvenida(parametros):
-    st.info("Elige tu **perfil** arriba y presiona **Comenzar**. Se descargan los fondos de bonos de los tres perfiles; "
-            "luego eliges cuál analizar (por defecto, el mejor de tu perfil). La aplicación no se actualiza sola: "
-            "los datos se renuevan cuando tú lo pides.")
-    columnas = st.columns(4)
-    for columna, (titulo, texto) in zip(columnas, [
-        ("Descriptivo", "Qué pasó con el fondo elegido: NAV, rentabilidad, benchmark, riesgo, prensa y el ranking de su perfil."),
-        ("Predictivo", "Qué podría pasar: pronóstico comparado con líneas base y riesgo de los próximos 3 meses."),
-        ("Prescriptivo", "Qué hacer: fondo completo o bonos específicos de su cartera, y la proyección de tu ganancia."),
-        ("Asesor IA", "Resuelve dudas puntuales conversando con Qwen3 o Gemini."),
-    ], strict=True):
-        columna.markdown(f'<div class="panel"><div class="panelTitulo">{titulo}</div>{texto}</div>', unsafe_allow_html=True)
-    st.write("")
+    """Pantalla inicial: que hace la app y un unico boton grande."""
+    tituloSeccion("Tres pasos", "Eliges tu perfil, eliges un fondo y te decimos si conviene invertir y cuánto podrías ganar.")
+    st.markdown(flujoPasos([{"titulo": "Paso 1", "valor": "Tu perfil", "estado": "activo"},
+                            {"titulo": "Paso 2", "valor": "El fondo", "estado": ""},
+                            {"titulo": "Paso 3", "valor": "¿Invertir o no?", "estado": ""}]), unsafe_allow_html=True)
     _, centro, _ = st.columns([1, 2, 1])
     if centro.button("Comenzar", key="comenzar", type="primary", use_container_width=True):
         cargarComun(parametros["usarCache"])
         st.rerun()
+    st.caption("La primera vez descarga los fondos de bonos de los tres perfiles (30-60 s). "
+               "Los datos no se actualizan solos: se renuevan cuando lo pides.")
 
 
 def principal():
     aplicarEstilos()
     mostrarCabecera("Proyecto académico · CRISP-ML(Q)")
     parametros, ejecutar, proveedorInfo, contenedores = dibujarBarraLateral()
-    perfil = selectorPerfil()
 
     if ejecutar:
         cargarComun(parametros["usarCache"])
@@ -224,10 +197,21 @@ def principal():
         mostrarBienvenida(parametros)
         return
 
+    # ---- Paso 1: perfil -------------------------------------------------------
+    flujo = st.container()  # la barra de 3 pasos se dibuja al final, cuando ya se sabe que eligio el usuario
+    tituloSeccion("1 · ¿Qué tipo de inversor eres?")
+    perfil = selectorPerfil()
+
+    # ---- Paso 2: fondo --------------------------------------------------------
     tablaPerfil, _ = st.session_state["rankingsComunes"].get(perfil, (pd.DataFrame(), {}))
+    tituloSeccion("2 · ¿Qué fondo quieres analizar?", f"Fondos de bonos para el perfil {perfil}, del mejor al peor.")
     ticker = selectorFondo(perfil, tablaPerfil)
     if not ticker:
-        st.info("Escribe el ticker del fondo que quieres analizar (p. ej. VFIAX), o elige uno de los fondos de tu perfil.")
+        with flujo:
+            st.markdown(flujoPasos([{"titulo": "Perfil", "valor": perfil, "estado": "listo"},
+                                    {"titulo": "Fondo", "valor": "Elige uno de la lista", "estado": "activo"},
+                                    {"titulo": "Resultado", "valor": "—", "estado": ""}]), unsafe_allow_html=True)
+        st.info("Busca el fondo en la lista y presiona «Analizar».")
         return
     benchmark = parametros["benchmarkManual"] or benchmarkParaFondo(ticker, perfil, BENCHMARK_POR_DEFECTO)
     entrada = obtenerAnalisis(ticker, benchmark, parametros, forzar=ejecutar)
@@ -241,29 +225,33 @@ def principal():
     if not datos.get("exito"):
         st.error(datos.get("mensaje") or "No se pudo completar el análisis de esa semana.")
         return
-    st.divider()
-    for aviso in datos.get("avisos", []):
-        st.caption(f"ℹ️ {aviso}")
+
+    # ---- Paso 3: resultado ----------------------------------------------------
+    tituloSeccion(f"3 · Resultado para {datos.get('nombreFondo') or ticker}")
     if datos.get("fechaCorte") is not None:
         st.info(f"**Evaluación retrospectiva al {datos['fechaCorte']:%d/%m/%Y}.** Precios y noticias solo hasta ese día.")
 
-    st.caption(f"Análisis de **{datos['ticker']}** vs **{datos['benchmark']}** "
-               f"(descargado {entrada['base']['fechaDescarga']:%d/%m/%Y %H:%M}) · último dato: **{formatearFecha(datos['fechaDatoFinal'])}**.")
-    with st.expander("Calidad y disponibilidad de los datos"):
-        for nivel, mensaje in datos["calidad"]:
-            {"ok": st.success, "alerta": st.warning}.get(nivel, st.error)(mensaje)
-    with st.expander("Datos utilizados y granularidad"):
-        dibujarGranularidad(datos)
-
-    pestanas = st.tabs(["📊 Descriptivo · ¿qué pasó?", "🔮 Predictivo · ¿qué podría pasar?", "🧭 Prescriptivo · ¿qué hago?", "💬 Asesor IA"])
+    pestanas = st.tabs(["🧭 ¿Qué hago?", "📊 ¿Qué pasó?", "🔮 ¿Qué podría pasar?", "💬 Asesor IA"])
     with pestanas[0]:
-        dibujarDashboardDescriptivo(datos, perfil)
-    with pestanas[1]:
-        dibujarDashboardPredictivo(datos)
-    with pestanas[2]:
         decision = dibujarDashboardPrescriptivo(datos, perfil, proveedorInfo)
+    with pestanas[1]:
+        dibujarDashboardDescriptivo(datos, perfil)
+    with pestanas[2]:
+        dibujarDashboardPredictivo(datos)
     with pestanas[3]:
         dibujarChatAsesor(datos, perfil, proveedorInfo, decision)
+    conclusion = (decision or {}).get("conclusion") or conclusionParaDatos(datos, perfil)
+    with flujo:  # la barra de arriba muestra la conclusion final (sobre el fondo o sobre tus bonos)
+        st.markdown(flujoPasos([{"titulo": "Perfil", "valor": perfil, "estado": "listo"},
+                                {"titulo": "Fondo", "valor": datos.get("nombreCorto") or ticker, "estado": "listo"},
+                                {"titulo": "Resultado", "valor": conclusion["decision"], "estado": "activo"}]), unsafe_allow_html=True)
+
+    # Datos y calidad: al final, plegado (es informacion de respaldo, no de decision)
+    st.write("")
+    with st.expander(f"Datos usados · actualizados al {formatearFecha(datos['fechaDatoFinal'])}"):
+        st.caption(f"Precios de Yahoo Finance descargados el {entrada['base']['fechaDescarga']:%d/%m/%Y a las %H:%M}. "
+                   "Proyecto académico: no es asesoría financiera.")
+        dibujarGranularidad(datos)
 
 
 principal()

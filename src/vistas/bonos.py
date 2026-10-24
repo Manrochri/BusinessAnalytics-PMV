@@ -8,9 +8,9 @@ import pandas as pd
 import streamlit as st
 
 from src.bonosIndividuales import evaluarBonos, resumirEmisores, resumirEvaluacion
-from src.catalogoBonos import buscarBono
-from src.datosSec import ErrorSec, carteraEnCache, descargarCartera, describirMeta
-from src.utilidades import esNulo
+from src.catalogoBonos import buscarBono, nombreFondo
+from src.datosSec import ErrorSec, carteraEnCache, descargarCartera
+from src.utilidades import esNulo, nombreLegible, registrarEvento
 
 CLAVE_CARTERAS = "carterasNport"
 
@@ -24,7 +24,7 @@ def cargarCartera(fondo):
     """Cartera N-PORT del fondo (sesion -> disco -> SEC). Devuelve (tabla, meta, error)."""
     carteras = st.session_state.setdefault(CLAVE_CARTERAS, {})
     if fondo not in carteras:
-        with st.spinner(f"Descargando la cartera bono por bono de {fondo} desde la SEC (formulario N-PORT)..."):
+        with st.spinner(f"Descargando la lista de bonos de {fondo} desde el registro oficial de EE.UU.…"):
             try:
                 carteras[fondo] = descargarCartera(fondo) + (None,)
             except ErrorSec as error:
@@ -36,9 +36,8 @@ def botonCargarCartera(fondo, clave):
     """Muestra el boton para descargar la cartera si aun no esta disponible. Devuelve True si ya se puede usar."""
     if carteraDisponible(fondo):
         return True
-    st.info(f"Para ver los bonos individuales de {fondo} hay que descargar su cartera desde la SEC "
-            "(una vez por semana; puede tardar 10-60 s en fondos con miles de bonos).")
-    if st.button(f"Cargar los bonos de {fondo}", key=clave, type="primary"):
+    st.caption("Primero hay que descargar la lista de bonos del fondo (puede tardar hasta un minuto).")
+    if st.button(f"Ver los bonos de {fondo}", key=clave, type="primary"):
         cargarCartera(fondo)
         return True
     return False
@@ -48,13 +47,16 @@ def bonosEvaluados(datos, fondo, perfil):
     """Bonos del fondo evaluados para el perfil (se guarda en la sesion). Devuelve (evaluados, meta, error)."""
     tabla, meta, error = cargarCartera(fondo)
     if error or tabla.empty:
-        return pd.DataFrame(), meta, f"No se pudo obtener la cartera de {fondo}: {error or 'la cartera no trae bonos.'}"
+        if error:
+            registrarEvento(f"Cartera de {fondo}: {error}", "WARN")  # el detalle tecnico va al registro, no a la pantalla
+        return pd.DataFrame(), meta, f"No se pudo obtener la lista de bonos de {fondo} en este momento. Intenta más tarde."
     fechaPosiciones = meta.get("fechaReporte") or meta.get("finPeriodo")
     clave = f"evaluados_{fondo}_{perfil}_{fechaPosiciones}_{datos['tasaLibre']:.4f}"
     if clave not in st.session_state:
         evaluados = evaluarBonos(tabla, perfil, datos.get("curva", {}), datos["tasaLibre"], fechaPosiciones)
         if not evaluados.empty:
             evaluados["fondo"] = fondo
+            evaluados["emisor"] = evaluados["emisor"].map(nombreLegible)  # 'PARAMOUNT GLOBAL' -> 'Paramount Global'
         st.session_state[clave] = evaluados
     evaluados = st.session_state[clave]
     if evaluados.empty:
@@ -73,11 +75,10 @@ def motivoSinBonosVigentes(fondo, cartera, fechaPosiciones):
     deuda = cartera.loc[cartera["esDeuda"] & cartera["vencimiento"].notna()] if {"esDeuda", "vencimiento"} <= set(cartera.columns) else pd.DataFrame()
     if not deuda.empty and deuda["vencimiento"].max() <= pd.Timestamp.today().normalize():
         return (f"Todos los bonos de la última cartera publicada de {fondo}{texto} ya vencieron "
-                f"(el último venció el {deuda['vencimiento'].max():%d/%m/%Y}). Es normal en fondos de plazo ultra corto: "
-                "la SEC publica la cartera con ~60 días de retraso y el fondo la renueva cada semana. "
-                f"Para este fondo conviene comprar el fondo {fondo} completo (o letras del Tesoro directamente en TreasuryDirect).")
-    return (f"La cartera publicada de {fondo}{texto} no tiene bonos vigentes con precio y vencimiento que se puedan evaluar "
-            f"(puede contener sobre todo efectivo, repos o derivados). Usa el fondo {fondo} completo.")
+                f"(el último venció el {deuda['vencimiento'].max():%d/%m/%Y}). Es normal en fondos de plazo muy corto: la lista "
+                "oficial se publica con unos 60 días de retraso y el fondo renueva sus bonos cada semana. "
+                f"Para este fondo conviene comprar el fondo {fondo} completo.")
+    return (f"La lista publicada de {fondo}{texto} no tiene bonos que se puedan evaluar uno por uno. Usa el fondo {fondo} completo.")
 
 
 def describirFondo(fondo):
@@ -91,11 +92,11 @@ def filtrarBonos(evaluados, prefijo):
     columnas = st.columns([2, 2, 2, 3])
     mostrar = columnas[0].selectbox("Mostrar", ["Recomendables y aceptables", "Solo recomendables", "Todos"], key=f"{prefijo}_mostrar")
     tipos = sorted(evaluados["tipoEmisorTexto"].dropna().unique())
-    elegidosTipo = columnas[1].multiselect("Tipo de emisor", tipos, key=f"{prefijo}_tipo", placeholder="Todos")
+    elegidosTipo = columnas[1].multiselect("Tipo", tipos, key=f"{prefijo}_tipo", placeholder="Todos")
     plazoMaximo = float(max(1.0, evaluados["plazo"].max()))
-    hasta = columnas[2].slider("Vencimiento hasta (años)", 0.0, round(plazoMaximo + 0.5, 0), round(plazoMaximo + 0.5, 0),
+    hasta = columnas[2].slider("Vence en hasta (años)", 0.0, round(plazoMaximo + 0.5, 0), round(plazoMaximo + 0.5, 0),
                                step=0.5, key=f"{prefijo}_plazo")
-    texto = columnas[3].text_input("Buscar emisor o CUSIP", key=f"{prefijo}_buscar", placeholder="p. ej. Apple, Treasury, 912828")
+    texto = columnas[3].text_input("Buscar empresa", key=f"{prefijo}_buscar", placeholder="p. ej. Apple, Treasury")
 
     tabla = evaluados
     if mostrar == "Solo recomendables":
@@ -117,35 +118,63 @@ def _pct(serie, decimales=2):
     return serie.map(lambda v: "N/D" if esNulo(v) else f"{v * 100:.{decimales}f}%")
 
 
+COLUMNAS_BONOS = ["Emisor", "Veredicto al vencer", "Rinde", "Vence", "Calidad", "Tipo", "Precio", "Por qué", "Código (CUSIP)"]
+
+
 def vistaBonos(tabla, maximo=300):
-    """Tabla de bonos lista para mostrar."""
+    """Tabla de bonos en lenguaje sencillo (lo tecnico queda en la evaluacion, no en la pantalla)."""
     if tabla is None or tabla.empty or "puesto" not in tabla:
-        return pd.DataFrame(columns=["#", "Veredicto", "Emisor", "Tipo", "Cupón", "Vence", "Precio", "TIR", "Rend. esperado",
-                                     "Dif. vs Tesoro", "Calidad implícita", "Duración", "% del fondo", "Puntaje", "Motivo",
-                                     "Nota", "CUSIP"])
+        return pd.DataFrame(columns=COLUMNAS_BONOS)
     t = tabla.head(maximo)
     return pd.DataFrame({
-        "#": t["puesto"], "Veredicto": t["veredicto"], "Emisor": t["emisor"], "Tipo": t["tipoEmisorTexto"],
-        "Cupón": _pct(t["cupon"], 3), "Vence": t["vencimiento"].dt.strftime("%d/%m/%Y"),
-        "Precio": t["precio"].round(2), "TIR": _pct(t["tir"]), "Rend. esperado": _pct(t["rendimientoEsperado"]),
-        "Dif. vs Tesoro": _pct(t["diferencial"]), "Calidad implícita": t["calidad"], "Duración": t["duracion"].round(1),
-        "% del fondo": t["pesoPct"].round(3), "Puntaje": t["puntaje"], "Motivo": t["motivo"], "Nota": t["nota"],
-        "CUSIP": t["cusip"],
+        "Emisor": t["emisor"], "Veredicto al vencer": t["veredicto"], "Rinde": _pct(t["rendimientoEsperado"]),
+        "Vence": t["vencimiento"].dt.strftime("%m/%Y"), "Calidad": t["calidad"], "Tipo": t["tipoEmisorTexto"],
+        "Precio": t["precio"].round(2), "Por qué": t["motivo"], "Código (CUSIP)": t["cusip"],
     })
 
 
 def vistaEmisores(emisores, maximo=300):
-    """Tabla de emisores lista para mostrar."""
+    """Tabla de empresas o entidades emisoras en lenguaje sencillo."""
+    columnas = ["Empresa o entidad", "Veredicto al vencer", "Bonos", "Rinde", "Calidad", "País", "Mejor bono"]
     if emisores is None or emisores.empty or "veredicto" not in emisores:
-        return pd.DataFrame(columns=["Veredicto", "Emisor", "Tipo", "País", "Bonos", "% del fondo", "Rend. esperado",
-                                     "Calidad (peor)", "Plazo prom. (años)", "Recomendables", "Mejor bono"])
+        return pd.DataFrame(columns=columnas)
     t = emisores.head(maximo)
     return pd.DataFrame({
-        "Veredicto": t["veredicto"], "Emisor": t["emisor"], "Tipo": t["tipo"], "País": t["pais"], "Bonos": t["bonos"],
-        "% del fondo": t["pesoFondoPct"].round(2), "Rend. esperado": _pct(t["rendimientoEsperado"]),
-        "Calidad (peor)": t["calidad"], "Plazo prom. (años)": t["plazoPromedio"].round(1),
-        "Recomendables": t["recomendables"], "Mejor bono": t["mejorBono"],
+        "Empresa o entidad": t["emisor"], "Veredicto al vencer": t["veredicto"], "Bonos": t["bonos"],
+        "Rinde": _pct(t["rendimientoEsperado"]), "Calidad": t["calidad"], "País": t["pais"], "Mejor bono": t["mejorBono"],
     })
+
+
+def veredictoFondoEnRanking(datos, fondo, perfil):
+    """(veredicto, motivo) del fondo en el ranking del perfil, o (None, '') si no esta."""
+    tabla, _ = (datos.get("rankingsPorPerfil") or {}).get(perfil, (pd.DataFrame(), {}))
+    if tabla is None or tabla.empty or fondo not in set(tabla["ticker"]):
+        return None, ""
+    fila = tabla.set_index("ticker").loc[fondo]
+    return fila.get("veredicto"), str(fila.get("motivo") or "")
+
+
+def explicarBonosVsFondo(datos, fondo, perfil, evaluados):
+    """
+    Aclara, ANTES de la tabla, por que un fondo «No recomendable» (o «Aceptable»)
+    puede tener adentro bonos «Recomendables»: son dos preguntas distintas.
+    """
+    veredicto, motivo = veredictoFondoEnRanking(datos, fondo, perfil)
+    r = resumirEvaluacion(evaluados) or {}
+    if veredicto in (None, "Recomendable") or not r.get("recomendables"):
+        return
+    nombre = nombreFondo(fondo)
+    porque = f" ({motivo[0].lower() + motivo[1:].rstrip('.')})" if motivo else ""
+    st.info(
+        f"**¿Por qué el fondo {nombre} es {veredicto.lower()} y, aun así, hay bonos recomendables adentro?** "
+        f"No se contradicen: son dos preguntas distintas.\n\n"
+        f"- **El fondo** se juzga por cómo se mueve su *precio*{porque}. Un fondo nunca vence: si las tasas suben "
+        "o la tendencia es bajista, su precio cae y tú pierdes al vender.\n"
+        "- **Cada bono** de esta lista se juzga por sí mismo, **como si lo guardaras hasta que venza**: lo que paga al "
+        "vencer, su calidad y su plazo. Si lo mantienes hasta el final, cobras lo pactado aunque su precio suba o baje en el camino.\n\n"
+        f"Por eso la columna se llama «Veredicto al vencer». Si NO piensas guardar los bonos hasta su vencimiento, "
+        f"guíate por el veredicto del fondo ({veredicto.lower()})."
+    )
 
 
 def resumenFondoBonos(evaluados, meta):
@@ -153,10 +182,10 @@ def resumenFondoBonos(evaluados, meta):
     r = resumirEvaluacion(evaluados)
     if not r:
         return
+    fecha = pd.to_datetime(meta.get("fechaReporte") or meta.get("finPeriodo"), errors="coerce") if meta else pd.NaT
     st.caption(
-        f"**{r['bonos']:,} bonos** de **{r['emisores']:,} emisores** · {r['recomendables']:,} recomendables, "
-        f"{r['aceptables']:,} aceptables, {r['noRecomendables']:,} no recomendables, {r['sinDatos']:,} sin datos · "
-        f"TIR ponderada {r['tirPonderada']:.2%}. {describirMeta(meta)}. Precios y pesos a esa fecha."
+        f"**{r['bonos']:,} bonos** de **{r['emisores']:,} empresas o entidades** · {r['recomendables']:,} recomendables para tu perfil"
+        + (f" · lista del {fecha:%d/%m/%Y}" if pd.notna(fecha) else "") + "."
     )
 
 

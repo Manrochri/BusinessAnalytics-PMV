@@ -13,19 +13,19 @@ from src.estilos import abrirPanel
 from src.graficos import graficarImportanciaVariables, graficarPronostico
 from src.preparacionDatos import COBERTURA_MINIMA_SENTIMIENTO
 from src.utilidades import formatearMoneda, formatearPorcentaje
-from src.vistas.comunes import filaTarjetas, formatearFecha
+from src.vistas.comunes import filaTarjetas, formatearFecha, tablaHtml
 
 
 def dibujarModelos(datos):
     modelo = datos["modelo"]
-    with abrirPanel("Comparación de modelos (validación y prueba)"):
+    with st.container():
         tabla = modelo["tabla"].copy()
         for columna in ("MAE validación (pp)", "MAE prueba (pp)", "RMSE prueba (pp)"):
             tabla[columna] = tabla[columna].round(2)
         tabla["R² prueba"] = tabla["R² prueba"].round(3)
         tabla["Acierto dirección prueba %"] = tabla["Acierto dirección prueba %"].round(1)
         tabla["Habilidad vs línea base %"] = tabla["Habilidad vs línea base %"].round(1)
-        st.dataframe(tabla, use_container_width=True, hide_index=True, key="predictivo_dataframe_1")
+        tablaHtml(tabla)
         periodos = modelo.get("periodos", {})
         textoPeriodos = " · ".join(
             f"{k}: {formatearFecha(v[0])} → {formatearFecha(v[1])}" for k, v in periodos.items()
@@ -79,14 +79,14 @@ def dibujarEstadoSentimiento(datos, modelo):
         meses = max(int(np.ceil((inicioTono - fechaNecesaria).days / 30.4)), 3)
         texto += (f" El tono de prensa ({datos.get('temaTono', '')}) empieza el {inicioTono:%d/%m/%Y}. Para incluirlo, "
                   f"completa unos **{meses} meses** más (hasta {fechaNecesaria:%m/%Y})")
-    st.warning(texto + " en la barra lateral → «Historia del tono de prensa» (≈ 5 s por cada 3 meses) y presiona "
+    st.warning(texto + " en el menú lateral → «Historia de noticias» (≈ 5 s por cada 3 meses) y presiona "
                        "«Actualizar datos». Mientras tanto, el sentimiento sí participa en la señal del Prescriptivo "
                        "cuando hay 120 días de tono.")
 
 
 def dibujarClasificador(datos):
     clasificador = datos.get("clasificadorRiesgo", {})
-    with abrirPanel("Riesgo de los próximos 3 meses (RandomForestClassifier)"):
+    with st.container():
         if clasificador.get("modelo") is None:
             st.info(clasificador.get("mensaje") or "No hay suficiente historial para el clasificador de riesgo.")
             return
@@ -108,12 +108,11 @@ def dibujarClasificador(datos):
         )
         columnas = st.columns([2, 3, 3])
         with columnas[0]:
-            st.dataframe(pd.DataFrame({"Categoría": list(clasificador["probabilidades"].keys()),
-                                       "Probabilidad": [f"{v:.0%}" for v in clasificador["probabilidades"].values()]}),
-                         use_container_width=True, hide_index=True, key="predictivo_dataframe_3")
+            tablaHtml(pd.DataFrame({"Categoría": list(clasificador["probabilidades"].keys()),
+                                    "Probabilidad": [f"{v:.0%}" for v in clasificador["probabilidades"].values()]}))
         with columnas[1]:
             st.caption("Matriz de confusión (tramo de prueba)")
-            st.dataframe(clasificador["matrizConfusion"], use_container_width=True, key="predictivo_dataframe_4")
+            tablaHtml(clasificador["matrizConfusion"], mostrarIndice=True)
         with columnas[2]:
             st.plotly_chart(graficarImportanciaVariables(clasificador["importancia"].head(8)), use_container_width=True, key="predictivo_plotly_chart_5")
         st.caption(
@@ -124,54 +123,39 @@ def dibujarClasificador(datos):
 
 
 def dibujarDashboardPredictivo(datos):
-    """Pestaña Predictivo."""
+    """Pestaña Predictivo: lo esencial arriba (4 cifras y el gráfico); el detalle técnico, plegado."""
     modelo, resumen, riesgoFuturo = datos["modelo"], datos["resumenPronostico"], datos["riesgoFuturo"]
     if not modelo.get("exito") or datos["pronostico"].empty:
         st.warning(modelo.get("mensaje") or "No se pudo generar el pronóstico. Amplía el periodo histórico.")
-        dibujarClasificador(datos)
+        with st.expander("Riesgo de los próximos 3 meses (Random Forest)", expanded=True):
+            dibujarClasificador(datos)
         return
 
-    if not modelo["tieneHabilidad"]:
-        st.warning(
-            f"Ningún modelo superó a las líneas base en el tramo de prueba (mejor: {modelo['mejorNombre']}, "
-            f"habilidad {modelo['habilidad']:+.1%}). El pronóstico muestra la **media histórica** con su banda "
-            "y la señal no lo usa. Es lo esperable en un fondo indexado (de acciones o de bonos): su precio es difícil de anticipar."
-        )
-
+    dias = datos["diasPronostico"]
     tono = "positivo" if (resumen["rentabilidadProyectada"] or 0) >= 0 else "negativo"
     filaTarjetas([
-        {"etiqueta": f"Valor proyectado ({datos['diasPronostico']} días)", "valor": formatearMoneda(resumen["valorProyectado"]),
-         "nota": f"Predictor: {modelo['nombrePredictor']}"},
-        {"etiqueta": "Rentabilidad proyectada", "valor": formatearPorcentaje(resumen["rentabilidadProyectada"], 1, True), "tono": tono,
-         "nota": f"Probabilidad de alza: {formatearPorcentaje(resumen['probabilidadAlza'], 0)}"},
-        {"etiqueta": "Banda 90%", "valor": f"{formatearMoneda(resumen['bandaInferior'])} – {formatearMoneda(resumen['bandaSuperior'])}",
-         "nota": f"Cobertura real en prueba: {modelo['cobertura90']:.0f}%"},
-        {"etiqueta": "Habilidad vs línea base", "valor": formatearPorcentaje(modelo["habilidad"], 1, True),
-         "tono": "positivo" if modelo["tieneHabilidad"] else "negativo", "nota": f"Mejor modelo: {modelo['mejorNombre']}"},
+        {"etiqueta": f"Rentabilidad en {dias} días", "valor": formatearPorcentaje(resumen["rentabilidadProyectada"], 1, True), "tono": tono,
+         "nota": f"Valor esperado {formatearMoneda(resumen['valorProyectado'])}"},
+        {"etiqueta": "Rango probable (90%)", "valor": f"{formatearMoneda(resumen['bandaInferior'])} – {formatearMoneda(resumen['bandaSuperior'])}",
+         "nota": f"Probabilidad de subir: {formatearPorcentaje(resumen['probabilidadAlza'], 0)}"},
+        {"etiqueta": "Escenario adverso", "valor": formatearPorcentaje(riesgoFuturo.get("perdidaEsperadaPeor"), 1, True), "tono": "negativo",
+         "nota": f"Riesgo {str(riesgoFuturo.get('nivel', 'N/D')).lower()} · 1 de cada 20 escenarios"},
+        {"etiqueta": "Confiabilidad del modelo", "valor": "Útil" if modelo["tieneHabilidad"] else "Baja",
+         "tono": "positivo" if modelo["tieneHabilidad"] else "negativo",
+         "nota": f"{formatearPorcentaje(modelo['habilidad'], 1, True)} vs un pronóstico simple"},
     ])
-    st.write("")
-    with abrirPanel(f"Pronóstico del NAV — {datos['diasPronostico']} días hábiles"):
+    if not modelo["tieneHabilidad"]:
+        st.caption("Ningún modelo superó a un pronóstico simple, así que se muestra el **promedio histórico** con su rango "
+                   "y no se usa en la recomendación. Es lo normal en fondos indexados: su precio es difícil de anticipar.")
+    with abrirPanel(f"Pronóstico a {dias} días hábiles"):
         st.plotly_chart(graficarPronostico(datos["historico"], datos["pronostico"]), use_container_width=True, key="predictivo_plotly_chart_6")
-        st.caption(
-            f"Pronóstico directo del retorno a {datos['diasPronostico']} días desde el último dato "
-            f"({formatearFecha(datos['fechaDatoFinal'])}). La banda sale de los errores de validación; en el tramo de "
-            f"prueba contuvo al {modelo['cobertura90']:.0f}% de los resultados reales (ideal: ~90%)."
-        )
+        st.caption(f"Desde el {formatearFecha(datos['fechaDatoFinal'])}. En la prueba, el rango contuvo al "
+                   f"{modelo['cobertura90']:.0f}% de los resultados reales (ideal: ~90%).")
 
-    columnas = st.columns([3, 2])
-    with columnas[0]:
+    with st.expander("Riesgo de los próximos 3 meses (Random Forest)"):
+        dibujarClasificador(datos)
+    with st.expander("Detalle técnico: comparación de modelos"):
         dibujarModelos(datos)
-    with columnas[1], abrirPanel("Variables más influyentes"):
+    with st.expander("Detalle técnico: qué datos pesan más en el pronóstico"):
         dibujarImportancia(datos, modelo)
         dibujarEstadoSentimiento(datos, modelo)
-
-    with abrirPanel("Riesgo prospectivo"):
-        filaTarjetas([
-            {"etiqueta": "Escenario adverso (P5)", "valor": formatearPorcentaje(riesgoFuturo.get("perdidaEsperadaPeor"), 1, True),
-             "tono": "negativo", "nota": f"En {datos['diasPronostico']} días hábiles"},
-            {"etiqueta": "Amplitud de la banda", "valor": formatearPorcentaje(riesgoFuturo.get("amplitudBanda"))},
-            {"etiqueta": "Nivel de riesgo prospectivo", "valor": str(riesgoFuturo.get("nivel", "N/D")),
-             "nota": f"Puntaje {riesgoFuturo.get('puntaje', 'N/D')}/10"},
-        ])
-        st.caption("Bajo si la pérdida en el escenario P5 es menor a 3%; Moderado hasta 8%; Alto por encima.")
-    dibujarClasificador(datos)

@@ -75,37 +75,37 @@ NOMINAL_MINIMO = {"Tesoro EE.UU.": 100, "otros": 1000}
 # incluye la compensacion por impagos que, en promedio, si ocurren).
 CATALOGO_BONOS = [
     # --- Conservador -------------------------------------------------------
-    {"ticker": "SGOV", "nombre": "iShares 0-3 Month Treasury Bond ETF", "perfil": "Conservador",
+    {"ticker": "SGOV", "nombreSimple": "Letras del Tesoro de EE.UU. a 0-3 meses", "nombre": "iShares 0-3 Month Treasury Bond ETF", "perfil": "Conservador",
      "segmento": "Tesoro ultra corto (0-3 meses)", "fondoMutuo": "VUSXX", "perdidaCreditoEsperada": 0.0},
-    {"ticker": "SHY", "nombre": "iShares 1-3 Year Treasury Bond ETF", "perfil": "Conservador",
+    {"ticker": "SHY", "nombreSimple": "Bonos del Tesoro de EE.UU. a 1-3 años", "nombre": "iShares 1-3 Year Treasury Bond ETF", "perfil": "Conservador",
      "segmento": "Tesoro corto plazo (1-3 años)", "fondoMutuo": "VSBSX", "perdidaCreditoEsperada": 0.0},
-    {"ticker": "VGSH", "nombre": "Vanguard Short-Term Treasury ETF", "perfil": "Conservador",
+    {"ticker": "VGSH", "nombreSimple": "Bonos del Tesoro de EE.UU. a 1-3 años, Vanguard", "nombre": "Vanguard Short-Term Treasury ETF", "perfil": "Conservador",
      "segmento": "Tesoro corto plazo (1-3 años)", "fondoMutuo": "VSBSX", "perdidaCreditoEsperada": 0.0},
-    {"ticker": "VTIP", "nombre": "Vanguard Short-Term Inflation-Protected Securities ETF", "perfil": "Conservador",
+    {"ticker": "VTIP", "nombreSimple": "Bonos protegidos contra la inflación, corto plazo", "nombre": "Vanguard Short-Term Inflation-Protected Securities ETF", "perfil": "Conservador",
      "segmento": "Protegidos contra inflación (corto plazo)", "fondoMutuo": "VTAPX", "perdidaCreditoEsperada": 0.0},
-    {"ticker": "VCSH", "nombre": "Vanguard Short-Term Corporate Bond ETF", "perfil": "Conservador",
+    {"ticker": "VCSH", "nombreSimple": "Bonos de empresas sólidas, corto plazo", "nombre": "Vanguard Short-Term Corporate Bond ETF", "perfil": "Conservador",
      "segmento": "Corporativos grado de inversión (corto plazo)", "fondoMutuo": "VSCSX", "perdidaCreditoEsperada": 0.001},
     # --- Moderado ----------------------------------------------------------
-    {"ticker": "BND", "nombre": "Vanguard Total Bond Market ETF", "perfil": "Moderado",
+    {"ticker": "BND", "nombreSimple": "Mercado total de bonos de EE.UU., Vanguard", "nombre": "Vanguard Total Bond Market ETF", "perfil": "Moderado",
      "segmento": "Mercado agregado de EE.UU.", "fondoMutuo": "VBTLX", "perdidaCreditoEsperada": 0.0005},
-    {"ticker": "AGG", "nombre": "iShares Core U.S. Aggregate Bond ETF", "perfil": "Moderado",
+    {"ticker": "AGG", "nombreSimple": "Mercado total de bonos de EE.UU., iShares", "nombre": "iShares Core U.S. Aggregate Bond ETF", "perfil": "Moderado",
      "segmento": "Mercado agregado de EE.UU.", "fondoMutuo": "VBTLX", "perdidaCreditoEsperada": 0.0005},
-    {"ticker": "VCIT", "nombre": "Vanguard Intermediate-Term Corporate Bond ETF", "perfil": "Moderado",
+    {"ticker": "VCIT", "nombreSimple": "Bonos de empresas sólidas, plazo intermedio", "nombre": "Vanguard Intermediate-Term Corporate Bond ETF", "perfil": "Moderado",
      "segmento": "Corporativos grado de inversión (intermedio)", "fondoMutuo": "VICSX", "perdidaCreditoEsperada": 0.002},
-    {"ticker": "IEF", "nombre": "iShares 7-10 Year Treasury Bond ETF", "perfil": "Moderado",
+    {"ticker": "IEF", "nombreSimple": "Bonos del Tesoro de EE.UU. a 7-10 años", "nombre": "iShares 7-10 Year Treasury Bond ETF", "perfil": "Moderado",
      "segmento": "Tesoro intermedio (7-10 años)", "fondoMutuo": "VSIGX", "perdidaCreditoEsperada": 0.0},
-    {"ticker": "MUB", "nombre": "iShares National Muni Bond ETF", "perfil": "Moderado",
+    {"ticker": "MUB", "nombreSimple": "Bonos municipales de EE.UU.", "nombre": "iShares National Muni Bond ETF", "perfil": "Moderado",
      "segmento": "Municipales (exentos de impuesto federal en EE.UU.)", "fondoMutuo": "VTEAX", "perdidaCreditoEsperada": 0.0005},
     # --- Agresivo ----------------------------------------------------------
-    {"ticker": "HYG", "nombre": "iShares iBoxx $ High Yield Corporate Bond ETF", "perfil": "Agresivo",
+    {"ticker": "HYG", "nombreSimple": "Bonos de alto rendimiento, iShares", "nombre": "iShares iBoxx $ High Yield Corporate Bond ETF", "perfil": "Agresivo",
      "segmento": "Alto rendimiento (high yield)", "fondoMutuo": "VWEAX", "perdidaCreditoEsperada": 0.015},
-    {"ticker": "JNK", "nombre": "SPDR Bloomberg High Yield Bond ETF", "perfil": "Agresivo",
+    {"ticker": "JNK", "nombreSimple": "Bonos de alto rendimiento, SPDR", "nombre": "SPDR Bloomberg High Yield Bond ETF", "perfil": "Agresivo",
      "segmento": "Alto rendimiento (high yield)", "fondoMutuo": "VWEAX", "perdidaCreditoEsperada": 0.015},
-    {"ticker": "ANGL", "nombre": "VanEck Fallen Angel High Yield Bond ETF", "perfil": "Agresivo",
+    {"ticker": "ANGL", "nombreSimple": "Bonos de empresas que perdieron su buena calificación", "nombre": "VanEck Fallen Angel High Yield Bond ETF", "perfil": "Agresivo",
      "segmento": "Ángeles caídos (ex grado de inversión)", "fondoMutuo": None, "perdidaCreditoEsperada": 0.01},
-    {"ticker": "EMB", "nombre": "iShares J.P. Morgan USD Emerging Markets Bond ETF", "perfil": "Agresivo",
+    {"ticker": "EMB", "nombreSimple": "Bonos de países emergentes en dólares", "nombre": "iShares J.P. Morgan USD Emerging Markets Bond ETF", "perfil": "Agresivo",
      "segmento": "Mercados emergentes en USD", "fondoMutuo": "VEGBX", "perdidaCreditoEsperada": 0.01},
-    {"ticker": "TLT", "nombre": "iShares 20+ Year Treasury Bond ETF", "perfil": "Agresivo",
+    {"ticker": "TLT", "nombreSimple": "Bonos del Tesoro de EE.UU. a más de 20 años", "nombre": "iShares 20+ Year Treasury Bond ETF", "perfil": "Agresivo",
      "segmento": "Tesoro largo plazo (20+ años)", "fondoMutuo": "VLGSX", "perdidaCreditoEsperada": 0.0},
 ]
 
@@ -153,3 +153,22 @@ def perfilDelFondo(ticker):
     """Perfil al que pertenece un fondo del catalogo (o None)."""
     bono = buscarBono(ticker)
     return bono["perfil"] if bono else None
+
+
+# Nombres sencillos de las referencias de comparacion (benchmarks) y del indice de acciones
+NOMBRES_REFERENCIA = {"BIL": "Letras del Tesoro de EE.UU. a 1-3 meses", "^SP500TR": "Índice S&P 500 con dividendos",
+                      "VTI": "Mercado total de acciones de EE.UU.", "VOO": "S&P 500, las 500 mayores empresas de EE.UU."}
+
+
+def nombreFondo(ticker, nombreLargo=None, conTicker=True):
+    """
+    Nombre sencillo para el usuario, con el simbolo AL FINAL:
+    'Bonos de empresas sólidas, plazo intermedio (VCIT)'. Fuera del catalogo usa
+    el nombre comercial ('Vanguard 500 Index Fund Admiral Shares (VFIAX)').
+    """
+    bono = buscarBono(ticker)
+    nombre = ((bono or {}).get("nombreSimple") or NOMBRES_REFERENCIA.get(ticker)
+              or (nombreLargo if nombreLargo and nombreLargo != ticker else None))
+    if not nombre:
+        return ticker
+    return f"{nombre} ({ticker})" if conTicker else nombre

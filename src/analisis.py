@@ -15,7 +15,7 @@ from config import NOTICIAS_LIMITE, TICKER_RENTA_VARIABLE
 from src.analisisBonos import descargarUniversoBonos, rankingBonos, recortarUniverso
 from src.backtest import backtestSenal
 from src.bonosIndividuales import TICKERS_CURVA, construirCurva
-from src.catalogoBonos import PERFILES, buscarBono, perfilDelFondo
+from src.catalogoBonos import PERFILES, buscarBono, nombreFondo, perfilDelFondo
 from src.datosEstructurados import (
     benchmarkEsRetornoTotal,
     calcularMetricasDescriptivas,
@@ -221,6 +221,8 @@ def ejecutarAnalisis(base, dias, fechaCorte=None):
             # Clase del fondo analizado (bonos o acciones) y su grupo en el catalogo por perfil
             "claseFondo": claseDelFondo(ticker, base["ficha"]), "perfilFondo": perfilDelFondo(ticker),
             "fichaCatalogo": buscarBono(ticker),
+            "nombreFondo": nombreFondo(ticker, (base.get("ficha") or {}).get("nombre")),
+            "nombreCorto": nombreFondo(ticker, (base.get("ficha") or {}).get("nombre"), conTicker=False),
             "tickerNoticias": base["tickerNoticias"], "temaTono": base.get("temaTono"), "tasaLibre": tasaLibre,
             "fechaCorte": pd.Timestamp(fechaCorte).normalize() if fechaCorte is not None else None,
             "fechaDatoFinal": fechaUltima, "diasPronostico": dias,

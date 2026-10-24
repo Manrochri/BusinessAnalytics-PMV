@@ -13,7 +13,7 @@ from src.utilidades import registrarEvento
 TIPOGRAFIA = dict(family="Inter, sans-serif", size=14, color=COLORES["grisOscuro"])
 
 
-def aplicarTema(figura, altura=380, mostrarLeyenda=False):
+def aplicarTema(figura, altura=340, mostrarLeyenda=False):
     """Aplica el tema visual comun a cualquier figura."""
     try:
         figura.update_layout(

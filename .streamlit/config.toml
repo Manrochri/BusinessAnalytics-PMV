@@ -9,6 +9,12 @@ backgroundColor = "#F4F6FA"
 secondaryBackgroundColor = "#EEF2F7"
 textColor = "#1F2937"
 font = "sans serif"
+# Letra de las TABLAS grandes (st.dataframe / st.data_editor se dibujan en un
+# lienzo y no las alcanza el CSS): usan 0.875 x baseFontSize -> 20 px da ~17.5 px,
+# igual que el texto de la pagina. El resto de la pagina NO crece: estilos.py
+# fija la raiz en 17 px (16 en el celular). Requiere Streamlit >= 1.45
+# (pip install -U streamlit); en versiones anteriores solo muestra un aviso.
+baseFontSize = 20
 
 [client]
 toolbarMode = "minimal"

@@ -138,3 +138,16 @@ def test_conclusion_compartida_por_prescriptivo_asesor_e_informe():
     assert (c["decision"], c["alternativa"], c["momento"]) == ("No invertir por ahora", "JNK", "Neutral")
     assert conclusionParaDatos(datos, "Conservador")["veredicto"] is None  # fuera del ranking de ese perfil
     assert "conclusion.decision" in INSTRUCCION_SISTEMA  # el LLM no debe presentar MANTENER como la recomendacion
+
+
+def test_bonos_recomendables_dentro_de_un_fondo_no_recomendable():
+    from src.motorPrescriptivo import conclusionInversion, conclusionSeleccion
+
+    fondo = conclusionInversion({"accion": "REDUCIR", "alertas": ["Tendencia bajista."]}, "No recomendable", "VCIT")
+    assert fondo["decision"] == "No invertir por ahora"
+    bonos = conclusionSeleccion(fondo, {"estado": "coherente"})
+    assert (bonos["decision"], bonos["invertir"], bonos["sobre"], bonos["veredictoFondo"]) == \
+        ("Invertir en tus bonos", True, "bonos", "No recomendable")
+    assert bonos["alternativa"] is None
+    assert conclusionSeleccion(fondo, {"estado": "riesgo"})["invertir"] is False
+    assert conclusionSeleccion(fondo, {"estado": "vacia"}) is fondo  # sin bonos marcados: manda el fondo

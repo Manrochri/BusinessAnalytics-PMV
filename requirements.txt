@@ -2,7 +2,7 @@
 # Rangos probados: Python 3.13, pandas 3.0, numpy 2.5, scikit-learn 1.9.
 # Para un entorno reproducible, despues de instalar ejecuta:
 #   pip freeze > requirements.lock
-streamlit>=1.39,<2          # >= 1.40 muestra el selector de perfil como control segmentado
+streamlit>=1.45,<2          # >= 1.45: theme.baseFontSize (letra de las tablas) y row_height
 pandas>=2.2,<3.1
 numpy>=1.26,<3
 scikit-learn>=1.5,<2

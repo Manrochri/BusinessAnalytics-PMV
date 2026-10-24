@@ -243,11 +243,40 @@ def conclusionInversion(senal, veredicto=None, alternativa=None):
     clave = "No recomendable" if veredicto == "Sin datos" else veredicto
     decision, tono, invertir, como = MATRIZ_CONCLUSION.get((clave, momento), MATRIZ_CONCLUSION[(None, momento)])
     if not invertir and alternativa:
-        como = como.replace("la alternativa", f"la alternativa ({alternativa})")
+        from src.catalogoBonos import nombreFondo
+
+        como = como.replace("la alternativa", f"la alternativa: {nombreFondo(alternativa)}")
     razonesMomento = (senal.get("alertas") if momento == "Desfavorable" else senal.get("motivos")) or []
     return {"decision": decision, "tono": tono, "invertir": invertir, "como": como, "momento": momento,
             "veredicto": veredicto, "alternativa": alternativa if not invertir else None,
             "razonesMomento": razonesMomento[:2]}
+
+
+def conclusionSeleccion(conclusionFondo, coherencia):
+    """
+    Conclusion cuando el usuario compra BONOS ESPECIFICOS (no el fondo).
+
+    El veredicto del FONDO mira su precio en el mercado (un fondo nunca vence: si
+    suben las tasas su precio cae y puede quedar con tendencia bajista). Un bono
+    individual mantenido HASTA SU VENCIMIENTO paga lo pactado aunque su precio
+    oscile, asi que se juzga por su propio veredicto (rendimiento al vencimiento,
+    calidad y plazo para el perfil). Por eso un fondo «No recomendable» puede
+    contener bonos «Recomendables»: no es una contradiccion.
+    """
+    estado = (coherencia or {}).get("estado")
+    if estado not in ("coherente", "cautela", "riesgo"):
+        return conclusionFondo
+    decision, tono, invertir, como = {
+        "coherente": ("Invertir en tus bonos", "verde", True,
+                      "Mantenlos hasta su vencimiento: así cobras lo pactado aunque su precio suba o baje en el camino."),
+        "cautela": ("Invertir con moderación", "ambar", True,
+                    "Algunos bonos son solo aceptables: mantenlos hasta su vencimiento o cámbialos por recomendables."),
+        "riesgo": ("Revisa tus bonos", "roja", False,
+                   "Hay bonos no recomendables para tu perfil en tu selección: reemplázalos antes de comprar."),
+    }[estado]
+    return dict(conclusionFondo, decision=decision, tono=tono, invertir=invertir, como=como, sobre="bonos",
+                veredictoFondo=conclusionFondo.get("veredicto"), decisionFondo=conclusionFondo.get("decision"),
+                alternativa=None if invertir else conclusionFondo.get("alternativa"))
 
 
 def conclusionParaDatos(datos, perfil):
@@ -474,7 +503,10 @@ def construirPlanAccion(senal, ticker, riesgo, perfil, resumenBonos, asignacion,
     else:
         plan = _planFondoDeAcciones(senal, ticker, riesgo, resumenBonos, asignacion, planCompra, capital, coherencia, fondoElegido)
     if conclusion:
-        plan[0] = {"accion": f"{conclusion['decision']} en {ticker}: {conclusion['como']}", "plazo": plan[0]["plazo"], "prioridad": 1}
+        from src.catalogoBonos import nombreFondo
+
+        plan[0] = {"accion": f"{conclusion['decision']} en {nombreFondo(ticker)}: {conclusion['como']}", "plazo": plan[0]["plazo"],
+                   "prioridad": 1}
     return plan
 
 
@@ -492,7 +524,9 @@ def _pasosRentaFija(plan, asignacion, planCompra, coherencia, fondoElegido, resu
         plan.append({"accion": "Conservar cada bono hasta su vencimiento y reinvertir los cupones; revisar el ranking cada trimestre", "plazo": "Trimestral"})
     elif fondoElegido:
         pesoRf = sum(f["peso"] for f in asignacion["filas"] if f["clase"] == "Renta fija")
-        plan.append({"accion": f"Invertir {pesoRf:.0%} de la cartera en el fondo {fondoElegido}", "plazo": "1 mes"})
+        from src.catalogoBonos import nombreFondo
+
+        plan.append({"accion": f"Invertir {pesoRf:.0%} de la cartera en el fondo {nombreFondo(fondoElegido)}", "plazo": "1 mes"})
     elif resumenBonos.get("invertir") is False:
         plan.append({"accion": "No comprar bonos de este perfil por ahora; mantener esa porción en liquidez y revisar cada mes", "plazo": "Mensual"})
 
@@ -707,7 +741,8 @@ def construirContexto(datos, perfil, decision=None):
         "bonosDelPerfil": {"recomendacion": resumenBonos.get("recomendacion"), "ranking": bonos},
         "asignacion": [{"detalle": f["detalle"], "ticker": f["ticker"], "pesoPct": _pct(f["peso"], 1)} for f in asignacion["filas"]],
         # LA recomendacion principal (la primera tarjeta del Prescriptivo)
-        "conclusion": {k: conclusion.get(k) for k in ("decision", "invertir", "veredicto", "momento", "como", "alternativa", "razonesMomento")},
+        "conclusion": {k: conclusion.get(k) for k in ("decision", "invertir", "veredicto", "momento", "como", "alternativa",
+                                                      "razonesMomento", "sobre", "decisionFondo")},
         "seleccionDelUsuario": _contextoSeleccion(decision),
         "proyeccionCarteraCompleta": _contextoCartera(decision.get("proyeccionCartera")),
         "titulares": titulares,
@@ -771,6 +806,9 @@ INSTRUCCION_SISTEMA = (
     "('conclusion.momento'). 'senal.accion' (COMPRAR/MANTENER/REDUCIR) es un dato técnico del momento: no lo presentes como la "
     "recomendación ni digas «la señal es MANTENER» como conclusión; si lo mencionas, tradúcelo a momento favorable, neutral o desfavorable. "
     "Si 'conclusion.alternativa' no es nula, menciónala. "
+    "Si 'conclusion.sobre' es 'bonos', la conclusión es sobre los BONOS ESPECÍFICOS elegidos: explica que el fondo completo "
+    "puede no recomendarse ('conclusion.decisionFondo') porque su precio oscila con las tasas, mientras que un bono mantenido "
+    "hasta su vencimiento paga lo pactado. "
     "Escribe en español claro. Indica que el análisis es educativo y no constituye asesoría financiera. "
     "Responde directamente, sin mostrar razonamiento interno."
 )
