@@ -34,6 +34,7 @@ from src.datosEstructurados import (
     calcularMaximaCaida,
     descargarHistorico,
     obtenerInfoFondo,
+    rendimientoPorDistribuciones,
     retornoEnVentana,
     sharpeAnual,
 )
@@ -95,9 +96,16 @@ def metricasBono(historico, ficha, tasaLibre, perdidaCredito=0.0, ventanaAnios=V
     ficha = ficha or {}
     m["gasto"] = ficha.get("gastoAnual")
     rendimiento = ficha.get("rendimientoDistribucion")
+    calculado = rendimientoPorDistribuciones(historico)
+    # 1) la ficha de Yahoo; 2) lo realmente pagado en 12 meses segun el historico;
+    # 3) solo como ultimo recurso, el retorno de 12 meses (que NO es un rendimiento:
+    #    en un mal anio sale negativo y deja a todos los fondos «no recomendables»)
     if not esNulo(rendimiento) and 0 < float(rendimiento) < 0.25:
         m["rendimiento"] = float(rendimiento)
         m["fuenteRendimiento"] = "Rendimiento por distribuciones (Yahoo)"
+    elif calculado is not None and 0 < calculado < 0.25:
+        m["rendimiento"] = float(calculado)
+        m["fuenteRendimiento"] = "Distribuciones pagadas en 12 meses (calculado del histórico)"
     elif not esNulo(m["retorno12m"]):
         m["rendimiento"] = float(m["retorno12m"])
         m["fuenteRendimiento"] = "Retorno de 12 meses (sin dato de rendimiento)"

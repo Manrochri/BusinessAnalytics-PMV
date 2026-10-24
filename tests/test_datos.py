@@ -6,6 +6,8 @@ from conftest import serieSintetica
 
 import src.utilidades as utilidades
 from src.datosEstructurados import (
+    construirTablaNav,
+    rendimientoPorDistribuciones,
     benchmarkEsRetornoTotal,
     calcularMetricasDescriptivas,
     clasificarRiesgo,
@@ -89,3 +91,18 @@ def test_division_temporal_con_purga():
     posicion = {f: i for i, f in enumerate(tabla.index)}
     assert posicion[partes["validacion"].index[0]] - posicion[partes["entrenamiento"].index[-1]] > 21
     assert posicion[partes["prueba"].index[0]] - posicion[partes["validacion"].index[-1]] > 21
+
+
+def test_rendimiento_por_distribuciones_cuando_falta_la_ficha():
+    """Sin 'yield' de Yahoo, el rendimiento sale de lo pagado en 12 meses (no del retorno del precio)."""
+    from src.analisisBonos import metricasBono
+    fechas = pd.bdate_range("2023-01-02", periods=800)
+    nav = pd.Series(np.linspace(100, 96, 800), index=fechas)  # precio cayendo: retorno 12m negativo
+    pagos = pd.Series(0.0, index=fechas)
+    pagos.loc[fechas.to_series().groupby([fechas.year, fechas.month]).first().values] = 0.35  # 12 pagos al anio
+    tabla = construirTablaNav(nav, None, pagos)
+    assert abs(rendimientoPorDistribuciones(tabla) - 12 * 0.35 / 96) < 1e-6
+    m = metricasBono(tabla, {}, 0.039, 0.0)
+    assert m["rendimiento"] > 0.04 and m["fuenteRendimiento"].startswith("Distribuciones")
+    assert rendimientoPorDistribuciones(tabla.drop(columns="distribucion")) is None
+    assert "distribucion" not in __import__("src.preparacionDatos", fromlist=["x"]).listarColumnasPredictoras(construirCaracteristicas(tabla, 10))

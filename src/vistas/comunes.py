@@ -24,6 +24,24 @@ OTRO_FONDO = "__otro__"
 ICONO_VEREDICTO = {"Recomendable": "🟢", "Aceptable": "🟡", "No recomendable": "🔴", "Sin datos": "⚪"}
 
 
+def _anchoCompleto():
+    """Streamlit >= 1.49 reemplazo **ANCHO por width="stretch" (lo otro avisa que se retira)."""
+    try:
+        return {"width": "stretch"} if "width" in inspect.signature(st.button).parameters else {"use_container_width": True}
+    except (TypeError, ValueError):
+        return {"use_container_width": True}
+
+
+ANCHO = _anchoCompleto()
+
+
+def sinAtributos(df):
+    """Copia ligera sin df.attrs (origen, fechaCache…): Streamlit no los puede serializar si traen fechas."""
+    copia = df.copy(deep=False)
+    copia.attrs = {}
+    return copia
+
+
 def formatearFecha(fecha, conHora=False):
     """Fecha legible, o 'N/D' si no hay valor."""
     try:
@@ -66,7 +84,7 @@ def opcionesGrandes(opciones, clave, valorActual, prefijoBoton, textoBoton="Eleg
                                       opcion.get("tonoChip", "gris"), elegida, compactas, opcion.get("dato")),
                         unsafe_allow_html=True)
             st.button("✓ Elegido" if elegida else textoBoton, key=f"{prefijoBoton}_{opcion['valor']}",
-                      type="primary" if elegida else "secondary", use_container_width=True,
+                      type="primary" if elegida else "secondary", **ANCHO,
                       on_click=_elegir, args=(clave, opcion["valor"]))
     return st.session_state.get(clave, valorActual)
 
@@ -105,6 +123,22 @@ def fondoInicial(tablaRanking):
 TONO_VEREDICTO_CHIP = {"Recomendable": "verde", "Aceptable": "ambar", "No recomendable": "roja", "Sin datos": "gris"}
 
 
+def avisoRendimientoAproximado(tablaRanking):
+    """
+    Avisa cuando el «rinde» de algun fondo no es su rendimiento sino su retorno
+    de 12 meses (pasa si Yahoo no entrega la ficha ni las distribuciones, algo
+    frecuente en servidores en la nube): en un mal anio sale negativo y deja a
+    todos los fondos como «no recomendables».
+    """
+    if tablaRanking is None or tablaRanking.empty or "fuenteRendimiento" not in tablaRanking:
+        return
+    aproximados = tablaRanking.loc[tablaRanking["fuenteRendimiento"].astype(str).str.startswith("Retorno"), "ticker"].tolist()
+    if aproximados:
+        st.warning(f"**Rendimiento aproximado en {', '.join(aproximados)}:** no se obtuvo lo que pagan al año, así que se usó su "
+                   "retorno de 12 meses (puede ser negativo y volverlos «no recomendables»). Prueba «Actualizar datos» o, en el "
+                   "menú lateral, «Descargar todo de nuevo».")
+
+
 def selectorFondo(perfil, tablaRanking):
     """
     Paso 2 del flujo: el FONDO A ANALIZAR, como tarjetas grandes (una por
@@ -128,6 +162,7 @@ def selectorFondo(perfil, tablaRanking):
                              "chip": f"{ICONO_VEREDICTO.get(f['veredicto'], '')} {f['veredicto']}",
                              "tonoChip": TONO_VEREDICTO_CHIP.get(f["veredicto"], "gris")})
         opcionesGrandes(opciones, clave, actual, f"btnFondo_{perfil}", "Analizar", compactas=True)
+        avisoRendimientoAproximado(tablaRanking)
 
     with st.expander("Analizar otro fondo (por ejemplo, uno de acciones)", expanded=actual == OTRO_FONDO):
         listado = listadoDeFondos()
@@ -138,7 +173,7 @@ def selectorFondo(perfil, tablaRanking):
             format_func=lambda t: etiquetaFondo({"ticker": t, **porTicker.loc[t].to_dict()}),
             placeholder="Escribe para buscar: S&P 500, Vanguard, tecnología, oro…")
         columnas[1].markdown("<div style='height:1.9rem'></div>", unsafe_allow_html=True)
-        columnas[1].button("Analizar", key=f"btnOtro_{perfil}", use_container_width=True, disabled=not elegidoLista,
+        columnas[1].button("Analizar", key=f"btnOtro_{perfil}", **ANCHO, disabled=not elegidoLista,
                            type="primary" if actual == OTRO_FONDO else "secondary", on_click=_elegir, args=(clave, OTRO_FONDO))
         st.caption(f"{len(listado):,} fondos: ETF de EE.UU. y fondos mutuos conocidos.")
     actual = st.session_state[clave]
@@ -233,11 +268,11 @@ def tablaDatos(df, key, **opciones):
     que permite ordenar, buscar y ampliar. Filas mas altas cuando la version
     de Streamlit lo permite; la letra la fija theme.baseFontSize.
     """
-    opciones.setdefault("use_container_width", True)
+    opciones.update(ANCHO)
     opciones.setdefault("hide_index", True)
     if _admiteAltoFila():
         opciones.setdefault("row_height", 40)
-    st.dataframe(df, key=key, **opciones)
+    st.dataframe(sinAtributos(df), key=key, **opciones)
 
 
 def formatearTablaPorcentajes(tabla, columnasPorcentaje, decimales=1):

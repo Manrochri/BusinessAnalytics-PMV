@@ -43,12 +43,17 @@ def _yfTicker(ticker):
     return yf.Ticker(ticker)
 
 
-def construirTablaNav(serieNav, volumen=None):
-    """Arma la tabla estandar (nav, volumen, retornoDiario, retornoAcumulado) a partir de una serie."""
+def construirTablaNav(serieNav, volumen=None, distribuciones=None):
+    """
+    Arma la tabla estandar (nav, volumen, distribucion, retornoDiario,
+    retornoAcumulado) a partir de una serie. 'distribucion' son los dividendos
+    o cupones pagados por participacion ese dia (0 si no hubo).
+    """
     tabla = pd.DataFrame(index=pd.to_datetime(serieNav.index))
     tabla.index.name = "Date"
     tabla["nav"] = pd.to_numeric(serieNav.values, errors="coerce")
     tabla["volumen"] = volumen.values if volumen is not None else np.nan
+    tabla["distribucion"] = pd.to_numeric(distribuciones.values, errors="coerce") if distribuciones is not None else np.nan
     tabla = tabla.dropna(subset=["nav"])
     tabla = tabla[~tabla.index.duplicated(keep="last")].sort_index()
     tabla["retornoDiario"] = tabla["nav"].pct_change()
@@ -80,7 +85,10 @@ def descargarHistorico(ticker, periodo="5y", usarCache=True):
             indice = indice.tz_localize(None)
         serie = pd.Series(crudo["Close"].values, index=indice.normalize())
         volumen = crudo["Volume"] if "Volume" in crudo else None
-        tabla = construirTablaNav(serie, volumen)
+        # Los dividendos vienen con el historico: no dependen de la ficha (.info),
+        # que Yahoo bloquea a menudo desde servidores en la nube.
+        distribuciones = crudo["Dividends"] if "Dividends" in crudo else None
+        tabla = construirTablaNav(serie, volumen, distribuciones)
 
         guardarTabla(tabla, nombreArchivo)
         registrarEvento(f"Historico de {ticker} descargado: {len(tabla)} registros.")
@@ -92,6 +100,27 @@ def descargarHistorico(ticker, periodo="5y", usarCache=True):
         if tabla is not None and not tabla.empty:
             return marcarOrigen(tabla, ORIGEN_RESPALDO, tabla.attrs.get("fechaCache"))
         return pd.DataFrame()
+
+
+def rendimientoPorDistribuciones(historico, meses=12):
+    """
+    Rendimiento por distribuciones calculado con el historico: lo pagado en
+    los ultimos 'meses' dividido por el precio actual. Sirve de respaldo
+    cuando la ficha de Yahoo no trae el 'yield'. None si no hay datos.
+    """
+    try:
+        if historico is None or historico.empty or "distribucion" not in historico:
+            return None
+        pagos = pd.to_numeric(historico["distribucion"], errors="coerce").fillna(0.0)
+        fin = historico.index[-1]
+        ventana = pagos.loc[historico.index > fin - pd.DateOffset(months=meses)]
+        # Se exige historia que cubra la ventana completa (si no, el rendimiento saldria bajo)
+        if historico.index[0] > fin - pd.DateOffset(months=meses) or ventana.sum() <= 0:
+            return None
+        precio = float(pd.to_numeric(historico["nav"], errors="coerce").dropna().iloc[-1])
+        return float(ventana.sum() / precio) if precio > 0 else None
+    except Exception:
+        return None
 
 
 def _normalizarTasa(valor):

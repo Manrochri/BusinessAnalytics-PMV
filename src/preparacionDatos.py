@@ -24,7 +24,7 @@ from src.utilidades import describirOrigen, registrarEvento
 VENTANAS = (5, 10, 21, 63)
 REZAGOS = (1, 2, 3, 5, 10)
 COLUMNAS_SENTIMIENTO = ["sentimiento", "noticiasDia", "sentimientoMedia5"]
-COLUMNAS_NO_PREDICTORAS = {"objetivo", "nav", "volumen", "retornoAcumulado"}
+COLUMNAS_NO_PREDICTORAS = {"objetivo", "nav", "volumen", "distribucion", "retornoAcumulado"}
 # Proporcion minima de filas de entrenamiento con noticias para que el
 # sentimiento entre al modelo (con menos, la columna es casi toda cero).
 COBERTURA_MINIMA_SENTIMIENTO = 0.30
