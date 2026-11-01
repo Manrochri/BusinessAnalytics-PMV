@@ -476,3 +476,24 @@ def graficarAlternativas(alternativas, simbolo="$"):
     except Exception as error:
         registrarEvento(f"Error al graficar las alternativas: {error}", "ERROR")
         return go.Figure()
+
+
+def graficarRentabilidadAnual(tabla, nombreFondo="Fondo", nombreBenchmark="Referencia"):
+    """Barras por ano calendario del fondo y su referencia (como en el prospecto). El ano en curso se marca como parcial."""
+    try:
+        if tabla is None or tabla.empty:
+            return go.Figure()
+        etiquetas = [f"{int(a)}{'*' if p else ''}" for a, p in zip(tabla["anio"], tabla["parcial"], strict=True)]
+        figura = go.Figure()
+        figura.add_trace(go.Bar(name=nombreFondo, x=etiquetas, y=tabla["fondo"] * 100, marker_color=COLORES["azul"],
+                                text=[f"{v * 100:+.1f}%" for v in tabla["fondo"]], textposition="outside",
+                                hovertemplate="%{x}: <b>%{y:.1f}%</b><extra></extra>"))
+        if "benchmark" in tabla and tabla["benchmark"].notna().any():
+            figura.add_trace(go.Bar(name=nombreBenchmark, x=etiquetas, y=tabla["benchmark"] * 100, marker_color=COLORES["grisMedio"],
+                                    hovertemplate="%{x}: <b>%{y:.1f}%</b><extra></extra>"))
+        figura.update_layout(barmode="group")
+        figura.update_yaxes(ticksuffix="%")
+        return aplicarTema(figura, altura=320, mostrarLeyenda=True)
+    except Exception as error:
+        registrarEvento(f"Error al graficar la rentabilidad anual: {error}", "ERROR")
+        return go.Figure()

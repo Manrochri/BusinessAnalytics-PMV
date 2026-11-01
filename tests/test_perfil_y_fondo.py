@@ -15,7 +15,8 @@ def test_benchmark_por_perfil():
     assert benchmarkParaFondo("SGOV", "Conservador") == "BIL"
     assert benchmarkParaFondo("HYG", "Agresivo") == "AGG"
     assert benchmarkParaFondo("AGG", "Moderado") == "BND"  # nunca contra si mismo
-    assert benchmarkParaFondo("VFIAX", "Moderado", "^SP500TR") == "^SP500TR"
+    assert benchmarkParaFondo("VFIAX", "Moderado", "^SP500TR") == "VOO"  # fondo mutuo del catalogo: su propia referencia
+    assert benchmarkParaFondo("ARKK", "Moderado", "^SP500TR") == "^SP500TR"
     assert perfilDelFondo("ANGL") == "Agresivo" and perfilDelFondo("VFIAX") is None
 
 

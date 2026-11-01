@@ -283,11 +283,11 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {{ border-radius: 16px !im
     height: 10rem; box-sizing: border-box;
     display: flex; flex-direction: column; overflow: hidden;
 }}
-.opcion.compacta {{ height: 9.6rem; }}
+.opcion.compacta {{ height: 10.6rem; }}
 .opcion.compacta .opcionTitulo {{ font-size: var(--t0); }}
 .opcion.compacta .opcionTitulo > span:first-child {{
     display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }}
-.opcion.compacta .opcionSub {{ -webkit-line-clamp: 1; }}
+.opcion.compacta .opcionSub {{ -webkit-line-clamp: 2; }}
 .opcionSub {{ display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }}
 
 .opcion.elegida {{ border-color: {COLORES['azul']}; background: {COLORES['azulClaro']}; }}

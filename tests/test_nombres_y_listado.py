@@ -18,7 +18,8 @@ NEWX,Brand New Thematic ETF,NYSE ARCA,ETF,2025-01-01,null,Active
 def test_nombre_sencillo_con_simbolo_al_final():
     assert nombreFondo("VCIT") == "Bonos de empresas sólidas, plazo intermedio (VCIT)"
     assert nombreFondo("VCIT", conTicker=False) == "Bonos de empresas sólidas, plazo intermedio"
-    assert nombreFondo("VFIAX", "Vanguard 500 Index Fund Admiral Shares") == "Vanguard 500 Index Fund Admiral Shares (VFIAX)"
+    assert nombreFondo("VFIAX", "Vanguard 500 Index Fund Admiral Shares") == "Las 500 mayores empresas de EE.UU., Vanguard (VFIAX)"
+    assert nombreFondo("ARKK", "ARK Innovation ETF") == "ARK Innovation ETF (ARKK)"
     assert nombreFondo("XYZ") == "XYZ"
     assert all(b.get("nombreSimple") for b in CATALOGO_BONOS)  # todo el catalogo tiene nombre en palabras
 

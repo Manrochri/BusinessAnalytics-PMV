@@ -13,16 +13,21 @@ import pandas as pd
 
 from config import NOTICIAS_LIMITE, TICKER_RENTA_VARIABLE
 from src.analisisBonos import descargarUniversoBonos, rankingBonos, recortarUniverso
+from src.analisisFondosMutuos import descargarUniversoMutuos, rankingFondosMutuos, recortarUniversoMutuos
 from src.backtest import backtestSenal
 from src.bonosIndividuales import TICKERS_CURVA, construirCurva
 from src.catalogoBonos import PERFILES, buscarBono, nombreFondo, perfilDelFondo
+from src.catalogoFondosMutuos import buscarFondoMutuo, condicionesDeCompra
 from src.datosEstructurados import (
     benchmarkEsRetornoTotal,
     calcularMetricasDescriptivas,
     clasificarRiesgo,
     compararConBenchmark,
     descargarHistorico,
+    mejorPeorTrimestre,
     obtenerInfoFondo,
+    rentabilidadPorAnio,
+    retornoPromedioAnual,
     obtenerPrincipalesPosiciones,
     obtenerTasaLibreRiesgo,
     resumirRentabilidadPorPeriodo,
@@ -68,6 +73,8 @@ def descargarComun(usarCache=True, incluirBonos=True):
         "tasaLibre": tasaLibre,
         "fuenteTasa": fuenteTasa,
         "bonos": descargarUniversoBonos(PERIODO_BONOS, usarCache) if incluirBonos else {},
+        # Fondos mutuos del catalogo (acciones, mixtos y bonos) y sus referencias
+        "mutuos": descargarUniversoMutuos(PERIODO_BONOS, usarCache) if incluirBonos else {},
         # Tasas del Tesoro a 3 meses, 5, 10 y 30 anios: curva actual y su historia
         # (para valorar bonos individuales y simular cambios de tasas)
         "curvaSeries": {t: descargarHistorico(t, "10y", usarCache) for t in TICKERS_CURVA} if incluirBonos else {},
@@ -93,6 +100,14 @@ def rankingsComunes(comun, fechaCorte=None):
     universo = recortarUniverso((comun or {}).get("bonos", {}), fechaCorte)
     tasaLibre = (comun or {}).get("tasaLibre", 0.0)
     return {perfil: rankingBonos(universo, perfil, tasaLibre) for perfil in PERFILES}
+
+
+def rankingsMutuosComunes(comun, rankingsBonos=None, fechaCorte=None):
+    """Ranking de los fondos mutuos de cada perfil (acciones, mixtos y bonos) con los datos comunes."""
+    universo = recortarUniversoMutuos((comun or {}).get("mutuos", {}), fechaCorte)
+    tasaLibre = (comun or {}).get("tasaLibre", 0.0)
+    rankingsBonos = rankingsBonos or rankingsComunes(comun, fechaCorte)
+    return {perfil: rankingFondosMutuos(universo, perfil, tasaLibre, rankingsBonos.get(perfil, (None, {}))[0]) for perfil in PERFILES}
 
 
 def descargarFondo(ticker, benchmark, periodo, tickerNoticias=None, usarCache=True, comun=None):
@@ -213,6 +228,9 @@ def ejecutarAnalisis(base, dias, fechaCorte=None):
     senal = generarSenal(metricas, resumenPron, riesgo, sentimiento, dias)
     universo = recortarUniverso(base.get("bonos", {}), fechaCorte)
     rankingsPorPerfil = {perfil: rankingBonos(universo, perfil, tasaLibre) for perfil in PERFILES}
+    universoMutuos = recortarUniversoMutuos(base.get("mutuos", {}), fechaCorte)
+    rankingsMutuosPorPerfil = {perfil: rankingFondosMutuos(universoMutuos, perfil, tasaLibre, rankingsPorPerfil[perfil][0])
+                               for perfil in PERFILES}
     backtest, resumenBacktest = backtestSenal(historico, historicoBenchmark, dias, tasaLibre, comparable)
 
     resultado.update(
@@ -240,7 +258,12 @@ def ejecutarAnalisis(base, dias, fechaCorte=None):
             "titulares": obtenerTitularesDestacados(noticias, 5), "universoBonos": universo,
             "motivoNoticias": getattr(base["noticias"], "attrs", {}).get("motivo", ""),
             "fuentesNoticias": getattr(base["noticias"], "attrs", {}).get("fuentes", {}),
-            "rankingsPorPerfil": rankingsPorPerfil,
+            "rankingsPorPerfil": rankingsPorPerfil, "rankingsMutuosPorPerfil": rankingsMutuosPorPerfil,
+            "universoMutuos": universoMutuos, "fichaMutuo": buscarFondoMutuo(ticker),
+            "condiciones": condicionesDeCompra(ticker, base.get("ficha")),
+            "rentabilidadAnual": rentabilidadPorAnio(historico, historicoBenchmark),
+            "trimestres": mejorPeorTrimestre(historico),
+            "retornosPromedio": retornoPromedioAnual(historico, historicoBenchmark),
             "rentaVariableReferencia": base.get("rentaVariable", pd.DataFrame()),
             "tickerRentaVariable": base.get("tickerRentaVariable", TICKER_RENTA_VARIABLE),
             "curvaSeries": base.get("curvaSeries", {}), "curva": construirCurva(base.get("curvaSeries", {})), "backtest": backtest, "resumenBacktest": resumenBacktest,

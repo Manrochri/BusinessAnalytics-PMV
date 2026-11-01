@@ -335,6 +335,46 @@ def rendimientoAnualizado(valorFinal, montoInicial, meses):
     return float((valorFinal / montoInicial) ** (12 / meses) - 1)
 
 
+def valorFuturoAportes(aporteMensual, meses, tasaAnual):
+    """Valor final de un aporte mensual (al inicio de cada mes) capitalizado a una tasa anual."""
+    meses = int(max(meses, 0))
+    if not aporteMensual or meses == 0:
+        return 0.0
+    i = (1 + float(tasaAnual)) ** (1 / 12) - 1
+    if abs(i) < 1e-12:
+        return float(aporteMensual * meses)
+    return float(aporteMensual * (((1 + i) ** meses - 1) / i) * (1 + i))
+
+
+def rendimientoAnualConAportes(valorFinal, montoInicial, aporteMensual, meses):
+    """
+    Rendimiento anual compuesto equivalente cuando hay aportes mensuales
+    (tasa interna de retorno mensual, por biseccion). Sin aportes coincide
+    con rendimientoAnualizado. NaN si no hay nada invertido.
+    """
+    meses = int(meses)
+    if meses <= 0 or valorFinal is None or esNulo(valorFinal):
+        return np.nan
+    if not aporteMensual:
+        return rendimientoAnualizado(valorFinal, montoInicial, meses)
+    if (montoInicial or 0) <= 0 and aporteMensual <= 0:
+        return np.nan
+    flujos = np.full(meses, float(aporteMensual))
+    flujos[0] += float(montoInicial or 0)
+
+    def valorCon(i):
+        return float(sum(f * (1 + i) ** (meses - k) for k, f in enumerate(flujos)))
+
+    bajo, alto = -0.5, 0.5
+    for _ in range(80):
+        medio = (bajo + alto) / 2
+        if valorCon(medio) > valorFinal:
+            alto = medio
+        else:
+            bajo = medio
+    return float((1 + (bajo + alto) / 2) ** 12 - 1)
+
+
 def proyectarCartera(componentes, meses):
     """
     Proyeccion de la CARTERA COMPLETA sumando, escenario por escenario, el
@@ -357,10 +397,14 @@ def proyectarCartera(componentes, meses):
         valores = np.resize(valores, largo) if len(valores) != largo else valores
         total += valores
         mediana = float(np.median(valores))
-        filas.append({"clase": c["clase"], "nombre": c["nombre"], "monto": float(c["monto"]),
-                      "valorMediano": mediana, "gananciaMediana": mediana - float(c["monto"]),
-                      "rendimientoAnual": rendimientoAnualizado(mediana, float(c["monto"]), meses)})
+        aporte = float(c.get("aporteMensual", 0.0) or 0.0)
+        inicial = float(c.get("montoInicial", c["monto"]))
+        filas.append({"clase": c["clase"], "nombre": c["nombre"], "monto": float(c["monto"]), "montoInicial": inicial,
+                      "aporteMensual": aporte, "valorMediano": mediana, "gananciaMediana": mediana - float(c["monto"]),
+                      "rendimientoAnual": rendimientoAnualConAportes(mediana, inicial, aporte, meses)})
     invertido = float(sum(c["monto"] for c in partes))
+    inicialTotal = float(sum(float(c.get("montoInicial", c["monto"])) for c in partes))
+    aporteTotal = float(sum(float(c.get("aporteMensual", 0.0) or 0.0) for c in partes))
     mediano = float(np.median(total))
     resumen = {
         "montoTotal": invertido, "totalAportado": invertido, "meses": int(meses),
@@ -369,7 +413,8 @@ def proyectarCartera(componentes, meses):
         "gananciaMediana": mediano - invertido, "gananciaPesimista": float(np.percentile(total, 10)) - invertido,
         "gananciaOptimista": float(np.percentile(total, 90)) - invertido,
         "probabilidadPerdida": float(np.mean(total < invertido)),
-        "rendimientoAnual": rendimientoAnualizado(mediano, invertido, meses),
+        "rendimientoAnual": rendimientoAnualConAportes(mediano, inicialTotal, aporteTotal, meses),
+        "montoInicial": inicialTotal, "aporteMensual": aporteTotal,
     }
     return {"resumen": resumen, "partes": pd.DataFrame(filas), "valores": total}
 

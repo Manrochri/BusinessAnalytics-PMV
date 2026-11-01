@@ -25,7 +25,12 @@ import pandas as pd
 import streamlit as st
 
 from config import RETORNO_ESPERADO_ACCIONES, VOLATILIDAD_ACCIONES_RESPALDO
-from src.analisisBonos import proyectarCartera, proyectarInversion, rendimientoAnualizado
+from src.analisisBonos import (
+    proyectarCartera,
+    proyectarInversion,
+    rendimientoAnualConAportes,
+    valorFuturoAportes,
+)
 from src.bonosIndividuales import (
     cambiosHistoricosTasas,
     evaluarSeleccion,
@@ -33,6 +38,7 @@ from src.bonosIndividuales import (
     proyectarBonos,
 )
 from src.catalogoBonos import nombreFondo
+from src.catalogoFondosMutuos import CLASE_BONOS, buscarFondoMutuo, esFondoMutuo, fondoMutuoGemelo
 from src.estilos import COLORES, abrirPanel, barraAsignacion, encabezadoPaso, recuadroEleccion
 from src.graficos import graficarAlternativas, graficarBacktest, graficarMapaBonos
 from src.motorPrescriptivo import (
@@ -61,6 +67,8 @@ from src.vistas.bonos import (
     vistaEmisores,
 )
 from src.vistas.comunes import (
+    ANCHO,
+    sinAtributos,
     ICONO_VEREDICTO,
     opcionesGrandes,
     tablaDatos,
@@ -80,10 +88,46 @@ MAXIMO_FILAS_EDITOR = 300
 # ---------------------------------------------------------------------------
 # Paso 1: fondo y modo de inversion
 # ---------------------------------------------------------------------------
+def tablaRentaFijaExtendida(tablaBonos, tablaMutuos):
+    """
+    Ranking de renta fija del perfil: los ETF de bonos MAS los fondos mutuos de
+    bonos del catalogo (con sus propias cifras), en un solo formato. Asi un
+    fondo mutuo de bonos analizado se trata igual que un ETF del ranking.
+    """
+    if tablaMutuos is None or tablaMutuos.empty or "clase" not in tablaMutuos:
+        return tablaBonos if tablaBonos is not None else pd.DataFrame()
+    bonosMutuos = tablaMutuos.loc[tablaMutuos["clase"] == CLASE_BONOS].copy()
+    if bonosMutuos.empty:
+        return tablaBonos if tablaBonos is not None else pd.DataFrame()
+    filas = []
+    for _, f in bonosMutuos.iterrows():
+        filas.append({"ticker": f["ticker"], "nombre": f["nombre"], "segmento": f["categoria"], "fondoMutuo": f["ticker"],
+                      "puntaje": f["puntaje"], "veredicto": f["veredicto"], "motivo": f["motivo"], "rendimiento": f["rendimiento"],
+                      "rendimientoEsperado": f["rendimientoEsperado"], "prima": f["prima"], "fuenteRendimiento": f["fuenteRendimiento"],
+                      "retornoAnual3a": f["retornoAnual3a"], "volatilidad": f["volatilidad"], "sharpe": f["sharpe"],
+                      "caidaMaxima": f["caidaMaxima"], "retorno6m": f["retorno6m"], "sobreMedia200": f["sobreMedia200"],
+                      "gasto": f["gastoAnual"], "perdidaCredito": 0.0, "componentes": f["componentes"], "tipo": "Fondo mutuo",
+                      "gemelo": f["gemelo"]})
+    extra = pd.DataFrame(filas)
+    base = tablaBonos.copy() if tablaBonos is not None and not tablaBonos.empty else pd.DataFrame(columns=extra.columns)
+    if "tipo" not in base:
+        base["tipo"] = "ETF"
+    if "gemelo" not in base:
+        base["gemelo"] = base["ticker"].map(fondoMutuoGemelo)
+    tabla = pd.concat([base, extra], ignore_index=True)
+    orden = {"Recomendable": 0, "Aceptable": 1, "No recomendable": 2, "Sin datos": 3}
+    tabla["ordenVeredicto"] = tabla["veredicto"].map(orden)
+    tabla = tabla.sort_values(["ordenVeredicto", "puntaje"], ascending=[True, False], na_position="last").drop(columns="ordenVeredicto")
+    tabla = tabla.reset_index(drop=True)
+    tabla["puesto"] = range(1, len(tabla) + 1)
+    return tabla
+
+
 def fondoDeRentaFija(datos, tablaFondos):
     """
     Fondo de bonos que se usa en la renta fija: el fondo analizado si es del
-    grupo del perfil; si no, el mejor recomendable/aceptable del ranking.
+    grupo del perfil; si no, el mejor recomendable/aceptable del ranking
+    (si el fondo analizado es un fondo mutuo, se prefiere un fondo mutuo).
     Devuelve (ticker o None, esElAnalizado).
     """
     if tablaFondos is None or tablaFondos.empty:
@@ -91,6 +135,10 @@ def fondoDeRentaFija(datos, tablaFondos):
     if datos["ticker"] in set(tablaFondos["ticker"]):
         return datos["ticker"], True
     elegibles = tablaFondos.loc[tablaFondos["veredicto"].isin(["Recomendable", "Aceptable"])]
+    if esFondoMutuo(datos["ticker"]) and "tipo" in elegibles:
+        mutuos = elegibles.loc[elegibles["tipo"] == "Fondo mutuo"]
+        if not mutuos.empty:
+            return mutuos.iloc[0]["ticker"], False
     return (elegibles.iloc[0]["ticker"] if not elegibles.empty else None), False
 
 
@@ -120,16 +168,26 @@ def pasoElegirModo(datos, perfil, tablaFondos, resumenFondos, conclusion):
         return None, MODO_LIQUIDEZ
     fondo, esAnalizado = fondoDeRentaFija(datos, tablaFondos)
     if not esAnalizado:
-        st.caption(f"{datos.get('nombreCorto') or datos['ticker']} va como tu parte de acciones; para la renta fija se usa "
-                   + (f"**{fondo}**, el mejor fondo de bonos de tu perfil." if fondo else "liquidez (ningún fondo de tu perfil califica hoy)."))
+        fichaMutuo = buscarFondoMutuo(datos["ticker"]) or {}
+        queEs = ("es un fondo mixto (ya combina acciones y bonos) y va como el centro de tu cartera"
+                 if fichaMutuo.get("clase") == "Mixto" else "va como tu parte de acciones")
+        veredictoRf = tablaFondos.set_index("ticker").loc[fondo, "veredicto"] if fondo else None
+        mejorQueHay = ("el mejor fondo de bonos de tu perfil" if veredictoRf == "Recomendable"
+                       else "el mejor fondo de bonos que hay hoy para tu perfil (ninguno llega a «recomendable»)")
+        st.caption(f"{datos.get('nombreCorto') or datos['ticker']} {queEs}; para la renta fija se usa "
+                   + (f"**{nombreFondo(fondo)}**, {mejorQueHay}"
+                      + (" (fondo mutuo, como el que analizas)." if esFondoMutuo(fondo) else ".")
+                      if fondo else "liquidez (ningún fondo de tu perfil califica hoy)."))
     if fondo is None:
         mostrarRecomendacion(resumenFondos.get("recomendacion", ""), resumenFondos.get("tono"))
         return None, MODO_LIQUIDEZ
 
     f = tablaFondos.set_index("ticker").loc[fondo]
     rendimiento = "s/d" if esNulo(f["rendimientoEsperado"]) else f"{f['rendimientoEsperado']:.2%}"
-    st.markdown(f"**{nombreFondo(fondo)}**  \n{ICONO_VEREDICTO.get(f['veredicto'], '')} {f['veredicto']} para tu perfil · "
-                f"puesto {int(f['puesto'])} de {len(tablaFondos)} · rinde {rendimiento} al año (sin riesgo: "
+    # Se deja claro de QUE fondo es el veredicto: el analizado (arriba) y el de la renta fija pueden ser distintos
+    titulo = "Tu fondo de bonos" + ("" if esAnalizado else " (distinto del fondo que analizas)")
+    st.markdown(f"**{titulo}: {nombreFondo(fondo)}**  \n{ICONO_VEREDICTO.get(f['veredicto'], '')} {f['veredicto']} para tu perfil · "
+                f"puesto {int(f['puesto'])} de {len(tablaFondos)} fondos de bonos · rinde {rendimiento} al año (sin riesgo: "
                 f"{formatearPorcentaje(datos['tasaLibre'], 2)})")
     if f["veredicto"] in ("No recomendable", "Sin datos") and esAnalizado:
         alternativa = mejorAlternativa(tablaFondos, fondo)
@@ -145,15 +203,31 @@ def pasoElegirModo(datos, perfil, tablaFondos, resumenFondos, conclusion):
         # La opcion inicial sigue la conclusion: si dice «no invertir», arranca en liquidez
         invertir = conclusion["invertir"] if esAnalizado else f["veredicto"] in ("Recomendable", "Aceptable")
         st.session_state[claveModo] = MODO_FONDO if invertir else MODO_LIQUIDEZ
+    esMutuo = esFondoMutuo(fondo)
     modo = opcionesGrandes([
-        {"valor": MODO_FONDO, "titulo": "El fondo completo", "subtitulo": "Una sola compra: miles de bonos y reinversión automática.",
+        {"valor": MODO_FONDO, "titulo": "El fondo completo",
+         "subtitulo": ("Una sola compra en la gestora o tu bróker, al precio de cierre del día; miles de bonos y reinversión automática."
+                       if esMutuo else "Una sola compra en tu bróker: miles de bonos y reinversión automática."),
          "chip": "Más simple", "tonoChip": "verde"},
-        {"valor": MODO_BONOS, "titulo": "Bonos específicos", "subtitulo": "Eliges empresa, plazo y calidad dentro del fondo; sabes cuánto cobras al vencer.",
-         "chip": "Lotes de USD 1 000", "tonoChip": "ambar"},
         {"valor": MODO_LIQUIDEZ, "titulo": "Nada por ahora", "subtitulo": "La parte de bonos se queda en liquidez (letras del Tesoro).",
          "chip": "Esperar", "tonoChip": "gris"},
-    ], claveModo, st.session_state[claveModo], f"btnModo_{perfil}_{fondo}")
+    ] + ([{"valor": MODO_BONOS, "titulo": "Bonos específicos", "subtitulo": "Opción avanzada elegida: compras bonos sueltos de la cartera del fondo.",
+           "chip": "Lotes de USD 1 000", "tonoChip": "ambar"}] if st.session_state[claveModo] == MODO_BONOS else []),
+        claveModo, st.session_state[claveModo], f"btnModo_{perfil}_{fondo}")
+    # Comprar bonos sueltos es la alternativa a un fondo mutuo, no su uso normal: queda como opcion avanzada
+    with st.expander("Opción avanzada: comprar bonos específicos de la cartera del fondo", expanded=modo == MODO_BONOS):
+        st.caption("Para quien prefiere elegir empresa, plazo y calidad y guardar cada bono hasta su vencimiento. Se compran en lotes "
+                   "de USD 1 000 (USD 100 en el Tesoro) a través de un bróker; no es como comprar el fondo.")
+        if modo == MODO_BONOS:
+            st.button("✓ Elegido · volver al fondo completo", key=f"btnModo_{perfil}_{fondo}_volver", type="primary",
+                      on_click=_elegirModo, args=(claveModo, MODO_FONDO))
+        else:
+            st.button("Elegir bonos específicos", key=f"btnModo_{perfil}_{fondo}_bonos", on_click=_elegirModo, args=(claveModo, MODO_BONOS))
     return fondo, modo
+
+
+def _elegirModo(clave, valor):
+    st.session_state[clave] = valor
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +271,7 @@ def tablaConCasillas(tabla, claveSeleccion, claveEditor, altura=None):
     if _admiteAltoFila():
         argumentos["row_height"] = 42
     st.data_editor(
-        vista, key=claveEditor, hide_index=True, use_container_width=True,
+        sinAtributos(vista), key=claveEditor, hide_index=True, **ANCHO,
         disabled=[c for c in vista.columns if c != "Comprar"],
         column_config={"Comprar": st.column_config.CheckboxColumn("Comprar", help="Marca para agregar el bono a tu compra", width="small"),
                        "Veredicto al vencer": st.column_config.TextColumn("Veredicto al vencer", help="Si guardas el bono hasta que venza")},
@@ -245,8 +319,8 @@ def pasoElegirBonos(datos, fondo, perfil, modo):
         st.caption(f"Comprar un lote de cada uno cuesta ≈ {formatearMoneda(costoMinimo)}. En el paso 3 verás cuántos alcanzas "
                    "con el monto que tu perfil destina a renta fija.")
     columnas[1].button("Sugerencia", key=f"sugerir_{claveSeleccion}", on_click=usarSugerencia,
-                       help="Los 3 mejores bonos de emisores distintos", use_container_width=True)
-    columnas[2].button("Vaciar", key=f"limpiar_{claveSeleccion}", on_click=limpiar, use_container_width=True)
+                       help="Los 3 mejores bonos de emisores distintos", **ANCHO)
+    columnas[2].button("Vaciar", key=f"limpiar_{claveSeleccion}", on_click=limpiar, **ANCHO)
     if seleccion.empty:
         st.info("Aún no marcaste bonos. Usa «Sugerencia» o marca «Comprar» en la tabla de abajo.")
     else:
@@ -268,7 +342,7 @@ def pasoElegirBonos(datos, fondo, perfil, modo):
             tablaDatos(vistaEmisores(tablaEmisores(evaluados, f"{fondo}_{perfil}")), key="prescriptivo_dataframe_1")
             st.caption("Para comprar un bono de un emisor, búscalo por su nombre en «Buscar emisor o CUSIP» y marca «Comprar».")
         with pestanas[1]:
-            st.plotly_chart(graficarMapaBonos(evaluados, claves), use_container_width=True, key="prescriptivo_plotly_chart_2")
+            st.plotly_chart(graficarMapaBonos(evaluados, claves), **ANCHO, key="prescriptivo_plotly_chart_2")
             st.caption("Cada punto es un bono (tamaño = peso en el fondo). Los anillos son tu selección. "
                        "Arriba a la izquierda: más rendimiento con menos plazo.")
     return seleccion, evaluados
@@ -287,9 +361,9 @@ def cambiosTasasCacheados(datos, meses):
 TONO_VEREDICTO = {"Recomendable": "verde", "Aceptable": "ambar", "No recomendable": "roja", "Sin datos": "roja"}
 
 
-def htmlEleccion(datos, fondo, modo, seleccion, tablaFondos, montoRf, meses):
-    """Recuadro «Lo que estás proyectando»: fondo, bonos elegidos, monto y plazo."""
-    plazo = f"{formatearMoneda(montoRf)} durante {meses} meses"
+def htmlEleccion(datos, fondo, modo, seleccion, tablaFondos, montoRf, meses, aporteRf=0.0):
+    """Recuadro «Lo que estás proyectando»: fondo, bonos elegidos, monto, aporte y plazo."""
+    plazo = f"{formatearMoneda(montoRf)}" + (f" más {formatearMoneda(aporteRf)} al mes" if aporteRf else "") + f" durante {meses} meses"
     if modo == MODO_LIQUIDEZ or not fondo:
         return recuadroEleccion("Lo que estás proyectando", f"Liquidez · letras del Tesoro al {datos['tasaLibre']:.2%}",
                                 f"{plazo}. Sin bonos por ahora.")
@@ -306,6 +380,15 @@ def htmlEleccion(datos, fondo, modo, seleccion, tablaFondos, montoRf, meses):
     extra = " · aún no marcaste bonos: se proyecta el fondo completo" if modo == MODO_BONOS else ""
     return recuadroEleccion("Lo que estás proyectando", f"Fondo completo: {nombreFondo(fondo)}",
                             f"{detalleFondo} · {plazo}{extra}")
+
+
+def avisoMinimo(fondo, modo, montoRf, datos):
+    """Un fondo mutuo tiene monto minimo de entrada: avisa si la parte de renta fija no lo alcanza."""
+    ficha = buscarFondoMutuo(fondo) if fondo and modo == MODO_FONDO else None
+    if ficha and ficha.get("minimo") and montoRf < ficha["minimo"]:
+        st.warning(f"**{nombreFondo(fondo)} pide un mínimo de {formatearMoneda(ficha['minimo'])} para abrir posición** y tu parte de "
+                   f"renta fija es {formatearMoneda(montoRf)}. Sube el capital, elige un fondo sin mínimo (Fidelity o Schwab) o "
+                   f"el ETF gemelo {ficha.get('gemelo') or ''} que se compra por participación.".replace("gemelo  que", "gemelo que"))
 
 
 def avisoLotes(plan, seleccion, montoRf, capital, pesoRf):
@@ -334,56 +417,68 @@ def pasoProyeccion(datos, perfil, fondo, modo, seleccion, tablaFondos, asignacio
     cartera); el detalle de la renta fija y el plan de compra, en su pestaña.
     Devuelve dict con capital, meses, plan, proyeccion (renta fija) y cartera.
     """
-    encabezadoPaso(numero, "¿Cuánto podrías ganar?", "Elige tu capital y el plazo.")
-    columnas = st.columns(2)
-    capital = columnas[0].number_input("Capital total (USD)", min_value=0.0, value=10000.0, step=1000.0, key="capitalTotal")
-    meses = columnas[1].slider("Plazo (meses)", 12, 120, 36, step=6, key="horizonteMeses")
+    encabezadoPaso(numero, "¿Cuánto podrías ganar?", "Elige tu capital inicial, cuánto aportarás cada mes y el plazo.")
+    columnas = st.columns(3)
+    capital = columnas[0].number_input("Capital inicial (USD)", min_value=0.0, value=10000.0, step=1000.0, key="capitalTotal")
+    aporte = columnas[1].number_input("Aporte mensual (USD)", min_value=0.0, value=0.0, step=50.0, key="aporteMensual",
+                                      help="Lo que agregarás cada mes, repartido igual que tu capital (acciones, bonos y liquidez).")
+    meses = columnas[2].slider("Plazo (meses)", 12, 120, 36, step=6, key="horizonteMeses")
     pesoRf = sum(f["peso"] for f in asignacion["filas"] if f["clase"] == "Renta fija")
     if modo == MODO_LIQUIDEZ:  # se proyecta en liquidez el monto que el perfil destinaria a renta fija
         pesoRf = asignacion.get("rentaFijaObjetivo", pesoRf)
-    montoRf = capital * pesoRf
+    montoRf, aporteRf = capital * pesoRf, aporte * pesoRf
+    totalRf = montoRf + aporteRf * meses  # todo lo que entra a renta fija en el plazo
 
-    st.markdown(htmlEleccion(datos, fondo, modo, seleccion, tablaFondos, montoRf, meses), unsafe_allow_html=True)
-    resultado = {"capital": capital, "meses": meses, "montoRf": montoRf, "plan": pd.DataFrame(), "proyeccion": None,
-                 "cartera": None, "valoresRf": None}
-    if capital <= 0:
-        st.info("Ingresa un capital para ver la proyección.")
+    st.markdown(htmlEleccion(datos, fondo, modo, seleccion, tablaFondos, montoRf, meses, aporteRf), unsafe_allow_html=True)
+    resultado = {"capital": capital, "aporte": aporte, "meses": meses, "montoRf": montoRf, "aporteRf": aporteRf,
+                 "plan": pd.DataFrame(), "proyeccion": None, "cartera": None, "valoresRf": None}
+    if capital <= 0 and aporte <= 0:
+        st.info("Ingresa un capital o un aporte mensual para ver la proyección.")
         return resultado
+    avisoMinimo(fondo, modo, montoRf, datos)
 
     # --- Calculo (sin dibujar) ----------------------------------------------
     tasa = datos["tasaLibre"]
     alternativas = []
-    valorLiquidez = montoRf * (1 + tasa) ** (meses / 12)
-    if montoRf > 0:
-        if not seleccion.empty:
+    valorLiquidez = montoRf * (1 + tasa) ** (meses / 12) + valorFuturoAportes(aporteRf, meses, tasa)
+    if totalRf > 0:
+        if not seleccion.empty and montoRf > 0:
             plan, sobrante = planDeCompra(seleccion, montoRf)
             plazos, cambios = cambiosTasasCacheados(datos, meses)
             proyeccion = proyectarBonos(plan, sobrante, meses, tasa, plazos, cambios)
-            r = proyeccion["resumen"]
-            resultado.update(plan=plan, proyeccion=r, valoresRf=proyeccion["valores"])
+            r = dict(proyeccion["resumen"])
+            # Los aportes mensuales no completan lotes: se acumulan en liquidez dentro de la renta fija
+            extra = valorFuturoAportes(aporteRf, meses, tasa)
+            valores = np.asarray(proyeccion["valores"], dtype=float) + extra
+            r.update(valorMediano=r["valorMediano"] + extra, valorPesimista=r["valorPesimista"] + extra,
+                     valorOptimista=r["valorOptimista"] + extra, gananciaMediana=r["gananciaMediana"] + extra - aporteRf * meses,
+                     gananciaPesimista=r["gananciaPesimista"] + extra - aporteRf * meses,
+                     gananciaOptimista=r["gananciaOptimista"] + extra - aporteRf * meses,
+                     probabilidadPerdida=float(np.mean(valores < totalRf)), montoTotal=totalRf)
+            resultado.update(plan=plan, proyeccion=r, valoresRf=valores)
             alternativas.append({"nombre": f"★ Tus {len(seleccion)} bono(s)", "p10": r["valorPesimista"], "p50": r["valorMediano"],
-                                 "p90": r["valorOptimista"], "invertido": montoRf})
+                                 "p90": r["valorOptimista"], "invertido": totalRf})
         if fondo:
             fila = tablaFondos.set_index("ticker").loc[fondo]
-            historico = datos["universoBonos"].get(fondo, {}).get("historico")
+            historico = {**datos.get("universoBonos", {}), **datos.get("universoMutuos", {})}.get(fondo, {}).get("historico")
             if not esNulo(fila["rendimientoEsperado"]):
-                simulacionFondo = proyectarInversion(historico, fila["rendimientoEsperado"], montoRf, 0, meses, simulaciones=3000, tasaLiquidez=tasa)
-                pf = dict(simulacionFondo["resumen"], montoTotal=montoRf)
+                simulacionFondo = proyectarInversion(historico, fila["rendimientoEsperado"], montoRf, aporteRf, meses, simulaciones=3000, tasaLiquidez=tasa)
+                pf = dict(simulacionFondo["resumen"], montoTotal=totalRf)
                 alternativas.append({"nombre": ("★ " if modo == MODO_FONDO or seleccion.empty and modo == MODO_BONOS else "")
                                      + f"Fondo {fondo}", "p10": pf["valorPesimista"], "p50": pf["valorMediano"],
-                                     "p90": pf["valorOptimista"], "invertido": montoRf})
+                                     "p90": pf["valorOptimista"], "invertido": totalRf})
                 if resultado["proyeccion"] is None and modo != MODO_LIQUIDEZ:
                     resultado.update(proyeccion=pf, valoresRf=simulacionFondo["valores"])
         alternativas.append({"nombre": ("★ " if modo == MODO_LIQUIDEZ else "") + f"Liquidez ({tasa:.2%})",
-                             "p10": valorLiquidez, "p50": valorLiquidez, "p90": valorLiquidez, "invertido": montoRf})
+                             "p10": valorLiquidez, "p50": valorLiquidez, "p90": valorLiquidez, "invertido": totalRf})
         if resultado["proyeccion"] is None:
-            resultado["proyeccion"] = {"valorMediano": valorLiquidez, "gananciaMediana": valorLiquidez - montoRf,
-                                       "gananciaPesimista": valorLiquidez - montoRf, "gananciaOptimista": valorLiquidez - montoRf,
+            resultado["proyeccion"] = {"valorMediano": valorLiquidez, "gananciaMediana": valorLiquidez - totalRf,
+                                       "gananciaPesimista": valorLiquidez - totalRf, "gananciaOptimista": valorLiquidez - totalRf,
                                        "valorPesimista": valorLiquidez, "valorOptimista": valorLiquidez, "probabilidadPerdida": 0.0,
-                                       "montoTotal": montoRf, "meses": meses}
+                                       "montoTotal": totalRf, "meses": meses}
             resultado["valoresRf"] = valorLiquidez
-        resultado["proyeccion"]["rendimientoAnual"] = rendimientoAnualizado(resultado["proyeccion"]["valorMediano"], montoRf, meses)
-    cartera, partes = calcularCarteraCompleta(datos, asignacion, capital, montoRf, meses, resultado["valoresRf"])
+        resultado["proyeccion"]["rendimientoAnual"] = rendimientoAnualConAportes(resultado["proyeccion"]["valorMediano"], montoRf, aporteRf, meses)
+    cartera, partes = calcularCarteraCompleta(datos, asignacion, capital, montoRf, meses, resultado["valoresRf"], aporte, aporteRf)
     resultado["cartera"] = cartera
 
     # --- Avisos que cambian lo que ves (solo si aplican) --------------------
@@ -393,7 +488,8 @@ def pasoProyeccion(datos, perfil, fondo, modo, seleccion, tablaFondos, asignacio
         avisoLotes(resultado["plan"], seleccion, montoRf, capital, pesoRf)
 
     # --- Resultado: primero toda la cartera, luego el detalle --------------
-    pestanas = st.tabs([f"Toda tu cartera · {formatearMoneda(capital)}", f"Tu renta fija · {formatearMoneda(montoRf)}"])
+    masAporte = (lambda m, a: formatearMoneda(m) + (f" + {formatearMoneda(a)}/mes" if a else ""))
+    pestanas = st.tabs([f"Toda tu cartera · {masAporte(capital, aporte)}", f"Tu renta fija · {masAporte(montoRf, aporteRf)}"])
     with pestanas[0]:
         dibujarCarteraCompleta(cartera, partes, capital, meses)
     with pestanas[1]:
@@ -406,30 +502,36 @@ def pasoProyeccion(datos, perfil, fondo, modo, seleccion, tablaFondos, asignacio
             "- **Bonos específicos:** cupones reinvertidos, impagos según la calidad implícita (recuperación 40%) y, si vencen "
             "después del plazo, venta a la tasa actual más un cambio de tasas histórico.\n"
             "- **Liquidez:** tasa de las letras del Tesoro.\n"
+            "- **Aportes mensuales:** entran al inicio de cada mes repartidos como tu capital; con bonos específicos se acumulan "
+            "en liquidez (no completan lotes). El % anual con aportes es la tasa interna de retorno.\n"
             "- Acciones y bonos se simulan por separado y se suman escenario por escenario. Antes de impuestos y comisiones."
         )
     return resultado
 
 
-def calcularCarteraCompleta(datos, asignacion, capital, montoRf, meses, valoresRf):
-    """Proyeccion de TODA la cartera (acciones + renta fija elegida + liquidez). Devuelve (resumen, partes) o (None, None)."""
+def calcularCarteraCompleta(datos, asignacion, capital, montoRf, meses, valoresRf, aporte=0.0, aporteRf=0.0):
+    """Proyeccion de TODA la cartera (acciones + renta fija elegida + liquidez), con aportes mensuales. Devuelve (resumen, partes) o (None, None)."""
     tasa = datos["tasaLibre"]
     pesoRv = sum(f["peso"] for f in asignacion["filas"] if f["clase"] == "Renta variable")
-    montoRv = capital * pesoRv
+    montoRv, aporteRv = capital * pesoRv, aporte * pesoRv
     montoLiquidez = max(capital - montoRv - montoRf, 0.0)
+    aporteLiquidez = max(aporte - aporteRv - aporteRf, 0.0)
     # Acciones: el fondo analizado si es de acciones; si no, el ETF de mercado amplio de referencia
     if datos.get("claseFondo") == "Renta variable":
         historicoRv, nombreRv = datos["historico"], f"Acciones: {datos.get('nombreFondo') or datos['ticker']}"
     else:
         historicoRv, nombreRv = datos.get("rentaVariableReferencia"), "Acciones de EE.UU. (fondo indexado amplio)"
-    simulacionRv = proyectarInversion(historicoRv, RETORNO_ESPERADO_ACCIONES, montoRv, 0, meses, simulaciones=3000,
+    simulacionRv = proyectarInversion(historicoRv, RETORNO_ESPERADO_ACCIONES, montoRv, aporteRv, meses, simulaciones=3000,
                                       semilla=23, volatilidadRespaldo=VOLATILIDAD_ACCIONES_RESPALDO, centrarMediana=True)
     componentes = [
-        {"clase": "Renta variable", "nombre": nombreRv, "monto": montoRv, "valores": simulacionRv["valores"]},
-        {"clase": "Renta fija", "nombre": "Tu renta fija", "monto": montoRf,
-         "valores": valoresRf if valoresRf is not None else montoRf * (1 + tasa) ** (meses / 12)},
-        {"clase": "Liquidez", "nombre": f"Liquidez ({tasa:.2%})", "monto": montoLiquidez,
-         "valores": montoLiquidez * (1 + tasa) ** (meses / 12)},
+        {"clase": "Renta variable", "nombre": nombreRv, "monto": montoRv + aporteRv * meses, "montoInicial": montoRv,
+         "aporteMensual": aporteRv, "valores": simulacionRv["valores"]},
+        {"clase": "Renta fija", "nombre": "Tu renta fija", "monto": montoRf + aporteRf * meses, "montoInicial": montoRf,
+         "aporteMensual": aporteRf,
+         "valores": valoresRf if valoresRf is not None else montoRf * (1 + tasa) ** (meses / 12) + valorFuturoAportes(aporteRf, meses, tasa)},
+        {"clase": "Liquidez", "nombre": f"Liquidez ({tasa:.2%})", "monto": montoLiquidez + aporteLiquidez * meses,
+         "montoInicial": montoLiquidez, "aporteMensual": aporteLiquidez,
+         "valores": montoLiquidez * (1 + tasa) ** (meses / 12) + valorFuturoAportes(aporteLiquidez, meses, tasa)},
     ]
     cartera = proyectarCartera(componentes, meses)
     return (cartera["resumen"], cartera["partes"]) if cartera else (None, None)
@@ -453,13 +555,17 @@ def dibujarCarteraCompleta(cartera, partes, capital, meses):
         st.info("Sin datos para proyectar la cartera.")
         return
     filaTarjetas(tarjetasProyeccion(cartera, meses))
+    totalAportado = float(partes["monto"].sum()) or capital or 1.0
     vista = pd.DataFrame({
-        "Parte": partes["nombre"], "Monto": partes["monto"].map(formatearMoneda),
-        "%": (partes["monto"] / capital).map(lambda v: f"{v:.0%}"),
+        "Parte": partes["nombre"], "Aportas en total": partes["monto"].map(formatearMoneda),
+        "%": (partes["monto"] / totalAportado).map(lambda v: f"{v:.0%}"),
         "Ganancia": partes["gananciaMediana"].map(formatearMoneda),
         "Anual": partes["rendimientoAnual"].map(lambda v: formatearPorcentaje(v, 2)),
     })
     tablaHtml(vista)
+    if cartera.get("aporteMensual"):
+        st.caption(f"Incluye {formatearMoneda(cartera['montoInicial'])} iniciales más {formatearMoneda(cartera['aporteMensual'])} "
+                   f"al mes durante {meses} meses = {formatearMoneda(totalAportado)} aportados.")
 
 
 def dibujarRentaFija(resultado, alternativas, seleccion, fondo, modo, montoRf, meses):
@@ -471,7 +577,7 @@ def dibujarRentaFija(resultado, alternativas, seleccion, fondo, modo, montoRf, m
     if not resultado["plan"].empty:
         st.caption(f"En bonos {formatearMoneda(r['invertidoEnBonos'])} · en liquidez {formatearMoneda(r['sobrante'])} "
                    "(lo que no completa un lote).")
-    st.plotly_chart(graficarAlternativas(alternativas), use_container_width=True, key="prescriptivo_plotly_chart_3")
+    st.plotly_chart(graficarAlternativas(alternativas), **ANCHO, key="prescriptivo_plotly_chart_3")
     st.caption("★ = tu elección; las otras filas, qué obtendrías con el mismo monto en otra alternativa.")
     if not resultado["plan"].empty:
         plan = resultado["plan"]
@@ -579,9 +685,10 @@ def dibujarResumen(datos, perfil, fondo, modo, seleccion, tablaFondos, asignacio
     if alerta:
         (st.warning if alerta[0] == "ambar" else st.info)(alerta[1])
 
+    motivoFondo = (filaFondo["motivo"] if filaFondo is not None and fondo == datos["ticker"] else conclusion.get("motivoFondo")) or ""
     porqueFondo = (f"el fondo es **{conclusion['veredicto'].lower()}** para tu perfil"
-                   + (f" ({filaFondo['motivo'].rstrip('.')})" if filaFondo is not None and fondo == datos["ticker"] else "")
-                   if conclusion["veredicto"] else "es un fondo fuera del ranking de bonos de tu perfil")
+                   + (f" ({str(motivoFondo).rstrip('.')})" if motivoFondo else "")
+                   if conclusion["veredicto"] else "es un fondo que no está en los catálogos de tu perfil (no tiene veredicto)")
     razones = "; ".join(r.rstrip(".") for r in conclusion["razonesMomento"]) or "sin señales fuertes a favor ni en contra"
     if conclusion.get("sobre") == "bonos":
         porqueFondo = (f"tus {coherencia['bonos']} bono(s) rinden {formatearPorcentaje(coherencia['rendimientoEsperado'], 2)} al año "
@@ -613,7 +720,7 @@ def dibujarBacktest(datos):
     if tabla is None or tabla.empty:
         st.info("Se necesita más historia para el backtest (al menos ~1.5 años). Prueba con el periodo de 10 años.")
         return
-    st.plotly_chart(graficarBacktest(tabla), use_container_width=True, key="prescriptivo_plotly_chart_7")
+    st.plotly_chart(graficarBacktest(tabla), **ANCHO, key="prescriptivo_plotly_chart_7")
     porAccion = resumen["porAccion"].reset_index().rename(columns={
         "accion": "Señal", "semanas": "Semanas", "retornoMedio": "Retorno medio posterior", "proporcionAlza": "% de veces que subió"})
     tablaHtml(formatearTablaPorcentajes(porAccion, ["Retorno medio posterior", "% de veces que subió"], 1))
@@ -672,7 +779,9 @@ def dibujarExplicacionIa(datos, perfil, proveedorInfo, decision):
 # ---------------------------------------------------------------------------
 def dibujarDashboardPrescriptivo(datos, perfil, proveedorInfo):
     """Pestaña Prescriptivo: resumen arriba, pasos 1-4 y detalles."""
-    tablaFondos, resumenFondos = datos["rankingsPorPerfil"].get(perfil, (pd.DataFrame(), {}))
+    tablaBonos, resumenFondos = datos["rankingsPorPerfil"].get(perfil, (pd.DataFrame(), {}))
+    tablaMutuos, _ = (datos.get("rankingsMutuosPorPerfil") or {}).get(perfil, (pd.DataFrame(), {}))
+    tablaFondos = tablaRentaFijaExtendida(tablaBonos, tablaMutuos)  # ETF + fondos mutuos de bonos del perfil
     resumenSuperior = st.container()  # se llena al final con las elecciones de abajo
     st.divider()
 

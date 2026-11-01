@@ -119,8 +119,10 @@ def _resolverConRespaldo(ticker, usarCache=True):
         return resolverSerie(ticker, usarCache)
     except ErrorSec:
         from src.catalogoBonos import buscarBono
+        from src.catalogoFondosMutuos import gemeloEtf
 
-        equivalente = (buscarBono(ticker) or {}).get("fondoMutuo")
+        # ETF -> su fondo mutuo equivalente; fondo mutuo -> su ETF gemelo (misma cartera)
+        equivalente = (buscarBono(ticker) or {}).get("fondoMutuo") or gemeloEtf(ticker)
         if not equivalente:
             raise
         registrarEvento(f"{ticker} no figura en la SEC; se usa la serie de {equivalente}.", "WARN")

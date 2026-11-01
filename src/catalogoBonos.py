@@ -142,7 +142,16 @@ BENCHMARK_ALTERNATIVO = "BND"  # si el fondo analizado es el propio benchmark
 
 
 def benchmarkParaFondo(ticker, perfil, otro=None):
-    """Benchmark del fondo analizado: el del perfil (o el alternativo si coincide); 'otro' si no es un fondo del catalogo."""
+    """
+    Benchmark del fondo analizado: para un fondo mutuo del catalogo, su
+    referencia propia (ETF de la misma categoria); para un ETF de bonos, el del
+    perfil (o el alternativo si coincide); 'otro' para cualquier otro fondo.
+    """
+    from src.catalogoFondosMutuos import buscarFondoMutuo
+
+    mutuo = buscarFondoMutuo(ticker)
+    if mutuo and mutuo.get("benchmark"):
+        return mutuo["benchmark"]
     if buscarBono(ticker) is None:
         return otro
     elegido = BENCHMARK_PERFIL.get(perfil, "AGG")
@@ -166,8 +175,10 @@ def nombreFondo(ticker, nombreLargo=None, conTicker=True):
     'Bonos de empresas sólidas, plazo intermedio (VCIT)'. Fuera del catalogo usa
     el nombre comercial ('Vanguard 500 Index Fund Admiral Shares (VFIAX)').
     """
-    bono = buscarBono(ticker)
-    nombre = ((bono or {}).get("nombreSimple") or NOMBRES_REFERENCIA.get(ticker)
+    from src.catalogoFondosMutuos import NOMBRES_REFERENCIA_EXTRA, buscarFondoMutuo
+
+    bono = buscarBono(ticker) or buscarFondoMutuo(ticker)
+    nombre = ((bono or {}).get("nombreSimple") or NOMBRES_REFERENCIA.get(ticker) or NOMBRES_REFERENCIA_EXTRA.get(ticker)
               or (nombreLargo if nombreLargo and nombreLargo != ticker else None))
     if not nombre:
         return ticker

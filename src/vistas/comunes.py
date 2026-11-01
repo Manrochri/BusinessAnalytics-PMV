@@ -70,14 +70,15 @@ def _elegir(clave, valor):
     st.session_state[clave] = valor
 
 
-def opcionesGrandes(opciones, clave, valorActual, prefijoBoton, textoBoton="Elegir", compactas=False):
+def opcionesGrandes(opciones, clave, valorActual, prefijoBoton, textoBoton="Elegir", compactas=False, columnas=None):
     """
     Fila de tarjetas de opcion grandes con su boton debajo. opciones = lista de
     dicts {valor, titulo, subtitulo, chip, tonoChip}. Al pulsar un boton se
     guarda 'valor' en st.session_state[clave]. Devuelve el valor actual.
+    'columnas' fija el numero de columnas (para alinear varias filas).
     """
-    columnas = st.columns(len(opciones))
-    for columna, opcion in zip(columnas, opciones, strict=True):
+    columnas = st.columns(max(columnas or 0, len(opciones)))
+    for columna, opcion in zip(columnas[:len(opciones)], opciones, strict=True):
         elegida = opcion["valor"] == valorActual
         with columna:
             st.markdown(tarjetaOpcion(opcion["titulo"], opcion.get("subtitulo", ""), opcion.get("chip"),
@@ -139,30 +140,62 @@ def avisoRendimientoAproximado(tablaRanking):
                    "menú lateral, «Descargar todo de nuevo».")
 
 
-def selectorFondo(perfil, tablaRanking):
+TARJETAS_POR_FILA = 4
+
+
+def _tarjetasFondosMutuos(tablaMutuos):
+    """Opciones (tarjetas) de los fondos mutuos del perfil: puesto, nombre, clase, lo que rinde, gasto y veredicto."""
+    opciones = []
+    for _, f in tablaMutuos.iterrows():
+        if f["clase"] == "Bonos":
+            rinde = "" if pd.isna(f["rinde"]) else f" · rinde {f['rinde']:.1%} al año"
+        else:
+            rinde = "" if pd.isna(f["rinde"]) else f" · {f['rinde']:+.1%}/año (3 años)"
+        gasto = "" if pd.isna(f.get("gastoAnual")) or f.get("gastoAnual") is None else f" · gasto {float(f['gastoAnual']):.2%}"
+        opciones.append({"valor": f["ticker"], "titulo": f"{int(f['puesto'])}. {f['nombre']}",
+                         "subtitulo": f"{f['ticker']} · {f['clase']}{rinde}{gasto}",
+                         "chip": f"{ICONO_VEREDICTO.get(f['veredicto'], '')} {f['veredicto']}",
+                         "tonoChip": TONO_VEREDICTO_CHIP.get(f["veredicto"], "gris")})
+    return opciones
+
+
+def selectorFondo(perfil, tablaRanking, tablaMutuos=None):
     """
-    Paso 2 del flujo: el FONDO A ANALIZAR, como tarjetas grandes (una por
-    fondo del perfil, en el orden del ranking, con su veredicto y rendimiento).
-    Debajo, plegado, «Analizar otro ticker». Cada perfil recuerda su eleccion.
+    Paso 2 del flujo: el FONDO A ANALIZAR, como tarjetas grandes. Primero los
+    FONDOS MUTUOS del perfil (acciones, mixtos y bonos, del mejor al peor, con
+    veredicto, rendimiento y gasto); plegados, los ETF de bonos del ranking y
+    «Analizar otro fondo». Cada perfil recuerda su eleccion.
     Devuelve el ticker elegido (o None si «Otro» aun esta vacio).
     """
     tickers = list(tablaRanking["ticker"]) if tablaRanking is not None and not tablaRanking.empty else []
+    tickersMutuos = list(tablaMutuos["ticker"]) if tablaMutuos is not None and not tablaMutuos.empty else []
     clave = f"fondoAnalizado_{perfil}"
-    if clave not in st.session_state or st.session_state[clave] not in tickers + [OTRO_FONDO]:
-        st.session_state[clave] = fondoInicial(tablaRanking)
+    if clave not in st.session_state or st.session_state[clave] not in tickersMutuos + tickers + [OTRO_FONDO]:
+        st.session_state[clave] = fondoInicial(tablaMutuos if tickersMutuos else tablaRanking)
     actual = st.session_state[clave]
 
+    if tickersMutuos:
+        opciones = _tarjetasFondosMutuos(tablaMutuos)
+        for inicio in range(0, len(opciones), TARJETAS_POR_FILA):
+            opcionesGrandes(opciones[inicio:inicio + TARJETAS_POR_FILA], clave, actual, f"btnFondo_{perfil}", "Analizar",
+                            compactas=True, columnas=TARJETAS_POR_FILA)
+        avisoRendimientoAproximado(tablaMutuos.loc[tablaMutuos["clase"] == "Bonos"])
+        st.caption("Veredicto para tu perfil · «rinde» = lo que paga al año un fondo de bonos; en acciones y mixtos, el retorno "
+                   "anual de los últimos 3 años · gasto = comisión anual del fondo. Sin cargos de compra ni de venta.")
+
     if tickers:
-        filas = tablaRanking.set_index("ticker")
-        opciones = []
-        for t in tickers:
-            f = filas.loc[t]
-            rinde = "" if pd.isna(f["rendimientoEsperado"]) else f" · rinde {f['rendimientoEsperado']:.1%} al año"
-            opciones.append({"valor": t, "titulo": f"{int(f['puesto'])}. {nombreFondo(t, conTicker=False)}", "subtitulo": f"{t}{rinde}",
-                             "chip": f"{ICONO_VEREDICTO.get(f['veredicto'], '')} {f['veredicto']}",
-                             "tonoChip": TONO_VEREDICTO_CHIP.get(f["veredicto"], "gris")})
-        opcionesGrandes(opciones, clave, actual, f"btnFondo_{perfil}", "Analizar", compactas=True)
-        avisoRendimientoAproximado(tablaRanking)
+        with st.expander("Ver también los ETF de bonos del ranking (se compran en un bróker, sin monto mínimo)",
+                         expanded=actual in tickers):
+            filas = tablaRanking.set_index("ticker")
+            opciones = []
+            for t in tickers:
+                f = filas.loc[t]
+                rinde = "" if pd.isna(f["rendimientoEsperado"]) else f" · rinde {f['rendimientoEsperado']:.1%} al año"
+                opciones.append({"valor": t, "titulo": f"{int(f['puesto'])}. {nombreFondo(t, conTicker=False)}", "subtitulo": f"{t}{rinde}",
+                                 "chip": f"{ICONO_VEREDICTO.get(f['veredicto'], '')} {f['veredicto']}",
+                                 "tonoChip": TONO_VEREDICTO_CHIP.get(f["veredicto"], "gris")})
+            opcionesGrandes(opciones, clave, actual, f"btnFondo_{perfil}", "Analizar", compactas=True)
+            avisoRendimientoAproximado(tablaRanking)
 
     with st.expander("Analizar otro fondo (por ejemplo, uno de acciones)", expanded=actual == OTRO_FONDO):
         listado = listadoDeFondos()

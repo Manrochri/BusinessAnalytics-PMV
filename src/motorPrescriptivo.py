@@ -37,6 +37,7 @@ from config import (
     PROVEEDOR_LLM_TTL,
 )
 from src.catalogoBonos import PARAMETROS_PERFIL, PERFILES
+from src.catalogoFondosMutuos import costoAcumulado
 from src.utilidades import esNulo, formatearPorcentaje, numeroSeguro, registrarEvento
 
 URL_OLLAMA = f"{OLLAMA_HOST}:{OLLAMA_PUERTO}"
@@ -285,13 +286,12 @@ def conclusionParaDatos(datos, perfil):
     perfil (la misma que muestra el Prescriptivo): veredicto del fondo en el
     ranking del perfil + momento de la senal, y la mejor alternativa del perfil.
     """
-    tabla, _ = (datos.get("rankingsPorPerfil") or {}).get(perfil, (pd.DataFrame(), {}))
-    veredicto, alternativa = None, None
-    if tabla is not None and not tabla.empty and datos["ticker"] in set(tabla["ticker"]):
-        veredicto = tabla.set_index("ticker").loc[datos["ticker"], "veredicto"]
-        otros = tabla.loc[tabla["veredicto"].isin(["Recomendable", "Aceptable"]) & (tabla["ticker"] != datos["ticker"])]
-        alternativa = otros.iloc[0]["ticker"] if not otros.empty else None
-    return conclusionInversion(datos["senal"], veredicto, alternativa)
+    from src.analisisFondosMutuos import veredictoParaPerfil
+
+    v = veredictoParaPerfil(datos, perfil)  # ranking de ETF de bonos o de fondos mutuos
+    conclusion = conclusionInversion(datos["senal"], v["veredicto"], v["alternativa"])
+    conclusion.update(motivoFondo=v["motivo"], origenVeredicto=v["origen"])
+    return conclusion
 
 
 def calcularRetornoEsperado(metricas, resumenPronostico, dias):
@@ -317,6 +317,11 @@ def esFondoDeRentaVariable(ticker, ficha=None):
     """True si el fondo analizado parece de acciones (no esta en el catalogo de bonos ni se declara de bonos)."""
     from src.catalogoBonos import todosLosTickersBonos
 
+    from src.catalogoFondosMutuos import CLASE_BONOS, claseFondoMutuo
+
+    claseMutuo = claseFondoMutuo(ticker)
+    if claseMutuo:
+        return claseMutuo != CLASE_BONOS
     categoria = str((ficha or {}).get("categoria", "")).lower()
     return ticker not in todosLosTickersBonos() and not any(p in categoria for p in ("bond", "fixed", "income", "bono"))
 
@@ -706,6 +711,11 @@ def construirContexto(datos, perfil, decision=None):
         "fondo": {"ticker": datos["ticker"], "nombre": datos["ficha"].get("nombre"),
                   "clase": datos.get("claseFondo"), "grupoDePerfil": datos.get("perfilFondo"),
                   "segmento": (datos.get("fichaCatalogo") or {}).get("segmento"),
+                  "esFondoMutuo": bool(datos.get("fichaMutuo")), "tipoDeFondo": (datos.get("fichaMutuo") or {}).get("clase"),
+                  "gastoAnualPct": _pct((datos.get("condiciones") or {}).get("gastoAnual")),
+                  "montoMinimoUsd": (datos.get("condiciones") or {}).get("minimo"),
+                  "costoEn10AniosPor10000Usd": round(costoAcumulado((datos.get("condiciones") or {}).get("gastoAnual")).get(10, 0), 2)
+                  if (datos.get("condiciones") or {}).get("gastoAnual") is not None else None,
                   "noticiasDeOtroTicker": datos.get("tickerNoticias") if datos.get("tickerNoticias") != datos["ticker"] else None},
         "perfilInversor": perfil,
         "indicadores": {
@@ -741,7 +751,7 @@ def construirContexto(datos, perfil, decision=None):
         "bonosDelPerfil": {"recomendacion": resumenBonos.get("recomendacion"), "ranking": bonos},
         "asignacion": [{"detalle": f["detalle"], "ticker": f["ticker"], "pesoPct": _pct(f["peso"], 1)} for f in asignacion["filas"]],
         # LA recomendacion principal (la primera tarjeta del Prescriptivo)
-        "conclusion": {k: conclusion.get(k) for k in ("decision", "invertir", "veredicto", "momento", "como", "alternativa",
+        "conclusion": {k: conclusion.get(k) for k in ("decision", "invertir", "veredicto", "motivoFondo", "momento", "como", "alternativa",
                                                       "razonesMomento", "sobre", "decisionFondo")},
         "seleccionDelUsuario": _contextoSeleccion(decision),
         "proyeccionCarteraCompleta": _contextoCartera(decision.get("proyeccionCartera")),
@@ -805,7 +815,9 @@ INSTRUCCION_SISTEMA = (
     "y explícala con sus dos razones, el veredicto del fondo para el perfil ('conclusion.veredicto') y el momento de entrada "
     "('conclusion.momento'). 'senal.accion' (COMPRAR/MANTENER/REDUCIR) es un dato técnico del momento: no lo presentes como la "
     "recomendación ni digas «la señal es MANTENER» como conclusión; si lo mencionas, tradúcelo a momento favorable, neutral o desfavorable. "
-    "Si 'conclusion.alternativa' no es nula, menciónala. "
+    "Si 'conclusion.alternativa' no es nula, menciónala. 'conclusion.motivoFondo' explica el veredicto del fondo. "
+    "Si 'fondo.esFondoMutuo' es verdadero, menciona su gasto anual, el costo en 10 años y el monto mínimo de entrada "
+    "('fondo.gastoAnualPct', 'fondo.costoEn10AniosPor10000Usd', 'fondo.montoMinimoUsd'). "
     "Si 'conclusion.sobre' es 'bonos', la conclusión es sobre los BONOS ESPECÍFICOS elegidos: explica que el fondo completo "
     "puede no recomendarse ('conclusion.decisionFondo') porque su precio oscila con las tasas, mientras que un bono mantenido "
     "hasta su vencimiento paga lo pactado. "

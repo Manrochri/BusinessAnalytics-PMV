@@ -77,6 +77,8 @@ MAPEO_TEMAS_TONO = {
     "VCSH": '"corporate bonds"', "VCIT": '"corporate bonds"', "IEF": '"Treasury yields"', "MUB": '"municipal bonds"',
     "HYG": '"high-yield bonds"', "JNK": '"high-yield bonds"', "ANGL": '"junk bonds"', "EMB": '"emerging market debt"',
     "TLT": '"Treasury yields"',
+    # Carteras mixtas (referencia de los fondos mixtos)
+    "AOK": '"stock market"', "AOR": '"stock market"', "AOM": '"stock market"',
 }
 
 # Hora de cierre del mercado de EE.UU. (hora de Nueva York)
@@ -95,6 +97,9 @@ MAPEO_TICKERS_NOTICIAS = {
     "VFIAX": "VOO", "VTSAX": "VTI", "VBTLX": "BND", "VGTSX": "VXUS", "VTIAX": "VXUS",
     "VIGAX": "VUG", "VVIAX": "VTV", "FXAIX": "SPY", "FSKAX": "ITOT", "SWPPX": "SPY",
     "SWTSX": "ITOT",
+    # Fondos mutuos del catalogo -> ETF gemelo o referencia (mismo tema de prensa)
+    "VWINX": "AOK", "VBIAX": "AOR", "VWELX": "AOR", "VSBSX": "VGSH", "VTAPX": "VTIP", "VSCSX": "VCSH", "FXNAX": "AGG",
+    "VICSX": "VCIT", "VSIGX": "IEF", "VTEAX": "MUB", "VWEHX": "HYG", "VEMBX": "EMB", "VLGSX": "TLT",
 }
 
 

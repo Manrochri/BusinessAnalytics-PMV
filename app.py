@@ -27,7 +27,7 @@ from config import (
     SEMANAS_EN_MEMORIA,
     TICKER_NOTICIAS_POR_DEFECTO,
 )
-from src.analisis import descargarComun, descargarFondo, ejecutarAnalisis, rankingsComunes
+from src.analisis import descargarComun, descargarFondo, ejecutarAnalisis, rankingsComunes, rankingsMutuosComunes
 from src.catalogoBonos import benchmarkParaFondo
 from src.datosNoticias import completarHistoriaTono, sugerirTickerNoticias, temaTonoPrensa
 from src.estilos import aplicarEstilos, flujoPasos, mostrarCabecera, tituloSeccion
@@ -35,7 +35,7 @@ from src.motorPrescriptivo import conclusionParaDatos, determinarProveedorActivo
 from src.preparacionDatos import listarFechasSemanales
 from src.utilidades import formatearNumero, formatearPorcentaje
 from src.vistas.asesor import dibujarChatAsesor
-from src.vistas.comunes import filaTarjetas, formatearFecha, selectorFondo, selectorPerfil
+from src.vistas.comunes import ANCHO, filaTarjetas, formatearFecha, selectorFondo, selectorPerfil
 from src.vistas.descriptivo import dibujarDashboardDescriptivo
 from src.vistas.predictivo import dibujarDashboardPredictivo
 from src.vistas.prescriptivo import dibujarDashboardPrescriptivo
@@ -59,7 +59,7 @@ def dibujarBarraLateral():
     """
     with st.sidebar:
         st.markdown("### Opciones")
-        ejecutar = st.button("🔄 Actualizar datos", type="primary", use_container_width=True,
+        ejecutar = st.button("🔄 Actualizar datos", type="primary", **ANCHO,
                              help="Vuelve a descargar los precios y las noticias más recientes.")
         contenedores = {"semana": st.container()}
         with st.expander("Opciones avanzadas"):
@@ -75,7 +75,7 @@ def dibujarBarraLateral():
         contenedores["tono"] = st.container()
 
         st.divider()
-        reverificar = st.button("Revisar asistente de IA", use_container_width=True)
+        reverificar = st.button("Revisar asistente de IA", **ANCHO)
         proveedorInfo = determinarProveedorActivo(forzarVerificacion=reverificar)
         _, estado, _ = proveedorInfo
         if proveedorListo(estado):
@@ -92,7 +92,7 @@ def dibujarHistoriaTono(contenedor, ticker, tickerNoticias):
         st.caption("Descarga meses anteriores del ánimo de la prensa sobre este fondo. Con más historia, las noticias "
                    "pesan en la recomendación y en el pronóstico. Tarda unos 5 segundos por cada 3 meses.")
         meses = st.number_input("Meses a descargar", min_value=3, max_value=120, value=24, step=3, key="mesesTono")
-        if st.button("Descargar historia", use_container_width=True):
+        if st.button("Descargar historia", **ANCHO):
             barra = st.progress(0.0, text="Descargando noticias…")
             r = completarHistoriaTono(tema, int(meses), lambda f, t: barra.progress(min(f, 1.0), text=t))
             textoDesde = f" desde el {r['desde']:%d/%m/%Y}" if r["desde"] is not None else ""
@@ -120,10 +120,11 @@ def dibujarSelectorSemana(contenedor, entrada):
 # ---------------------------------------------------------------------------
 def cargarComun(usarCache):
     """Datos comunes a todos los fondos (universo de bonos, curva, tasa) y sus rankings por perfil."""
-    with st.spinner("Descargando los fondos de bonos de los tres perfiles, la curva del Tesoro y la tasa libre de riesgo..."):
+    with st.spinner("Descargando los fondos mutuos y los fondos de bonos de los tres perfiles, la curva del Tesoro y la tasa libre de riesgo..."):
         comun = descargarComun(usarCache)
     st.session_state["comun"] = comun
     st.session_state["rankingsComunes"] = rankingsComunes(comun)
+    st.session_state["rankingsMutuos"] = rankingsMutuosComunes(comun, st.session_state["rankingsComunes"])
     st.session_state["analisisPorFondo"] = OrderedDict()
 
 
@@ -179,10 +180,10 @@ def mostrarBienvenida(parametros):
                             {"titulo": "Paso 2", "valor": "El fondo", "estado": ""},
                             {"titulo": "Paso 3", "valor": "¿Invertir o no?", "estado": ""}]), unsafe_allow_html=True)
     _, centro, _ = st.columns([1, 2, 1])
-    if centro.button("Comenzar", key="comenzar", type="primary", use_container_width=True):
+    if centro.button("Comenzar", key="comenzar", type="primary", **ANCHO):
         cargarComun(parametros["usarCache"])
         st.rerun()
-    st.caption("La primera vez descarga los fondos de bonos de los tres perfiles (30-60 s). "
+    st.caption("La primera vez descarga los fondos mutuos y de bonos de los tres perfiles (1-2 min). "
                "Los datos no se actualizan solos: se renuevan cuando lo pides.")
 
 
@@ -204,8 +205,10 @@ def principal():
 
     # ---- Paso 2: fondo --------------------------------------------------------
     tablaPerfil, _ = st.session_state["rankingsComunes"].get(perfil, (pd.DataFrame(), {}))
-    tituloSeccion("2 · ¿Qué fondo quieres analizar?", f"Fondos de bonos para el perfil {perfil}, del mejor al peor.")
-    ticker = selectorFondo(perfil, tablaPerfil)
+    tablaMutuos, _ = st.session_state.get("rankingsMutuos", {}).get(perfil, (pd.DataFrame(), {}))
+    tituloSeccion("2 · ¿Qué fondo mutuo quieres analizar?",
+                  f"Fondos mutuos de acciones, mixtos y de bonos para el perfil {perfil}, del mejor al peor.")
+    ticker = selectorFondo(perfil, tablaPerfil, tablaMutuos)
     if not ticker:
         with flujo:
             st.markdown(flujoPasos([{"titulo": "Perfil", "valor": perfil, "estado": "listo"},

@@ -123,6 +123,24 @@ def rendimientoPorDistribuciones(historico, meses=12):
         return None
 
 
+def _normalizarGasto(valor):
+    """
+    Gasto anual (expense ratio). Yahoo lo publica en PORCENTAJE (0.04 = 0.04%,
+    0.0945 = 0.0945%), asi que se divide entre 100; un valor menor a 0.001 no
+    puede ser un porcentaje real y se toma como fraccion ya normalizada.
+    None si no es un numero.
+    """
+    if esNulo(valor):
+        return None
+    try:
+        numero = float(valor)
+    except (TypeError, ValueError):
+        return None
+    if numero < 0:
+        return None
+    return numero if numero < 0.001 else numero / 100
+
+
 def _normalizarTasa(valor):
     """Yahoo publica algunos rendimientos como fraccion (0.042) y otros en % (4.2)."""
     if esNulo(valor):
@@ -164,7 +182,7 @@ def obtenerInfoFondo(ticker, usarCache=True):
         ficha["categoria"] = info.get("category") or info.get("quoteType") or "No disponible"
         ficha["moneda"] = info.get("currency", "USD")
         ficha["familia"] = info.get("fundFamily") or info.get("sector") or "No disponible"
-        ficha["gastoAnual"] = _normalizarTasa(
+        ficha["gastoAnual"] = _normalizarGasto(
             info.get("netExpenseRatio") or info.get("annualReportExpenseRatio")
         )
         ficha["patrimonio"] = info.get("totalAssets") or info.get("marketCap")
@@ -430,3 +448,83 @@ def resumirRentabilidadPorPeriodo(historicoFondo):
         resumen[etiqueta] = retornoEnVentana(nav, dias)
     resumen["Desde inicio"] = float(nav.iloc[-1] / nav.iloc[0] - 1)
     return resumen
+
+
+# ---------------------------------------------------------------------------
+# Desempeno como en el prospecto de un fondo mutuo
+# ---------------------------------------------------------------------------
+def _serieNav(historico):
+    if historico is None or historico.empty or "nav" not in historico:
+        return pd.Series(dtype=float)
+    return pd.to_numeric(historico["nav"], errors="coerce").dropna()
+
+
+def rentabilidadPorAnio(historicoFondo, historicoBenchmark=None, maximoAnios=10):
+    """
+    Rentabilidad de cada ano calendario (como la grafica de barras del
+    prospecto), del fondo y de su referencia. El ano en curso va hasta el
+    ultimo dato y se marca como parcial. Devuelve DataFrame con columnas
+    anio, fondo, benchmark, parcial (vacio si no hay datos).
+    """
+    nav = _serieNav(historicoFondo)
+    if nav.empty:
+        return pd.DataFrame(columns=["anio", "fondo", "benchmark", "parcial"])
+    cierres = nav.groupby(nav.index.year).agg(["first", "last"])
+    cierres["anterior"] = cierres["last"].shift(1)
+    # El primer ano no tiene cierre anterior: se usa su primer dato (ano parcial)
+    base = cierres["anterior"].fillna(cierres["first"])
+    retornos = cierres["last"] / base - 1
+    bench = _serieNav(historicoBenchmark)
+    retornosBench = pd.Series(dtype=float)
+    if not bench.empty:
+        cb = bench.groupby(bench.index.year).agg(["first", "last"])
+        retornosBench = cb["last"] / cb["last"].shift(1).fillna(cb["first"]) - 1
+    ultimoAnio = nav.index[-1].year
+    primerAnioCompleto = nav.index[0].year + (0 if nav.index[0].month == 1 and nav.index[0].day <= 7 else 1)
+    tabla = pd.DataFrame({"anio": retornos.index.astype(int), "fondo": retornos.values})
+    tabla["benchmark"] = [retornosBench.get(a, np.nan) for a in tabla["anio"]]
+    tabla["parcial"] = (tabla["anio"] == ultimoAnio) | (tabla["anio"] < primerAnioCompleto)
+    return tabla.tail(maximoAnios).reset_index(drop=True)
+
+
+def mejorPeorTrimestre(historicoFondo):
+    """Mejor y peor trimestre calendario del fondo (como en el prospecto). Devuelve dict o {}."""
+    nav = _serieNav(historicoFondo)
+    if len(nav) < 126:
+        return {}
+    try:
+        trimestral = nav.resample("QE").last()
+    except ValueError:  # pandas < 2.2
+        trimestral = nav.resample("Q").last()
+    retornos = trimestral.pct_change().dropna()
+    if retornos.empty:
+        return {}
+    mejor, peor = retornos.idxmax(), retornos.idxmin()
+    return {"mejor": float(retornos.max()), "mejorTrimestre": f"T{mejor.quarter} {mejor.year}",
+            "peor": float(retornos.min()), "peorTrimestre": f"T{peor.quarter} {peor.year}", "trimestres": int(len(retornos))}
+
+
+def retornoPromedioAnual(historicoFondo, historicoBenchmark=None, anios=(1, 3, 5, 10)):
+    """
+    Retorno anual promedio (compuesto) a 1, 3, 5 y 10 anos del fondo y de su
+    referencia, como la tabla del prospecto. Solo los plazos que cubre la historia.
+    """
+    nav, bench = _serieNav(historicoFondo), _serieNav(historicoBenchmark)
+    filas = []
+    if nav.empty:
+        return pd.DataFrame(columns=["plazo", "anios", "fondo", "benchmark"])
+    fin = nav.index[-1]
+    for n in anios:
+        inicio = fin - pd.DateOffset(years=n)
+        if nav.index[0] > inicio + pd.Timedelta(days=10):
+            continue
+        navInicio = nav.loc[nav.index <= inicio]
+        fondo = (nav.iloc[-1] / navInicio.iloc[-1]) ** (1 / n) - 1 if not navInicio.empty else np.nan
+        benchmark = np.nan
+        if not bench.empty and bench.index[0] <= inicio + pd.Timedelta(days=10):
+            bInicio = bench.loc[bench.index <= inicio]
+            bFin = bench.loc[bench.index <= fin]
+            if not bInicio.empty and not bFin.empty:
+                benchmark = (bFin.iloc[-1] / bInicio.iloc[-1]) ** (1 / n) - 1
+        filas.append({"plazo": f"{n} año" if n == 1 else f"{n} años", "anios": n, "fondo": float(fondo), "benchmark": float(benchmark)})
+    return pd.DataFrame(filas, columns=["plazo", "anios", "fondo", "benchmark"])
