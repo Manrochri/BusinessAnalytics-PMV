@@ -15,6 +15,7 @@ analisis queda en memoria. «Actualizar datos» fuerza una nueva lectura.
 Ejecucion:  streamlit run app.py
 """
 
+import time
 from collections import OrderedDict
 
 import pandas as pd
@@ -40,7 +41,7 @@ from src.analisis import (
 from src.catalogoBonos import benchmarkParaFondo, nombreFondo
 from src.datosNoticias import completarHistoriaTono, descargarNoticias, descargarTonoPrensa, sugerirTickerNoticias, temaTonoPrensa
 from src.estilos import ancla, aplicarEstilos, flujoPasos, mostrarCabecera, portada, tituloSeccion
-from src.motorPrescriptivo import conclusionParaDatos, determinarProveedorActivo, proveedorListo
+from src.motorPrescriptivo import conclusionParaDatos, determinarProveedorActivo, llamadasHoy, proveedorListo
 from src.preparacionDatos import listarFechasSemanales
 from src.utilidades import formatearNumero, formatearPorcentaje
 from src.vistas.asesor import dibujarChatAsesor
@@ -157,12 +158,14 @@ def cargarComun(usarCache, lugar=None):
             barra.progress(fraccion, text=f"{contador['n']} de {total} · {texto}")
             estado.update(label=f"Preparando los fondos de los tres perfiles… {fraccion:.0%}")
 
+        inicio = time.time()
         comun = descargarComun(usarCache, progreso=avanzar)
         barra.progress(0.995, text="Calculando los rankings de cada perfil…")
         st.session_state["comun"] = comun
         st.session_state["rankingsComunes"] = rankingsComunes(comun)
         st.session_state["rankingsMutuos"] = rankingsMutuosComunes(comun, st.session_state["rankingsComunes"])
         st.session_state["analisisPorFondo"] = OrderedDict()
+        st.session_state.setdefault("tiempos", {})["cargaInicial"] = round(time.time() - inicio, 1)
         barra.progress(1.0, text="Listo")
         estado.update(label="Datos listos", state="complete", expanded=False)
 
@@ -182,12 +185,14 @@ def obtenerAnalisis(ticker, benchmark, parametros, forzar=False):
                 barra.progress(i / pasos, text=f"Paso {i + 1} de {pasos} · {texto}")
                 estado.update(label=f"Analizando {nombre}… {i / pasos:.0%}")
 
+            inicio = time.time()
             base = descargarFondo(ticker, benchmark, parametros["periodo"], parametros["tickerNoticias"],
                                   parametros["usarCache"], comun=st.session_state["comun"], progreso=avanzar)
             barra.progress((pasos - 1) / pasos, text=f"Paso {pasos} de {pasos} · Entrenando los modelos y calculando la señal")
             estado.update(label=f"Analizando {nombre}… {(pasos - 1) / pasos:.0%}")
             memoria[clave] = {"base": base, "resultado": ejecutarAnalisis(base, parametros["dias"]),
                               "evaluaciones": OrderedDict()}
+            st.session_state.setdefault("tiempos", {})[ticker] = round(time.time() - inicio, 1)
             barra.progress(1.0, text="Listo")
             estado.update(label=f"Análisis de {nombre} listo", state="complete", expanded=False)
         while len(memoria) > FONDOS_EN_MEMORIA:
@@ -352,6 +357,13 @@ def principal():
         st.caption(f"Precios de Yahoo Finance descargados el {entrada['base']['fechaDescarga']:%d/%m/%Y a las %H:%M}. "
                    "Proyecto académico: no es asesoría financiera.")
         dibujarGranularidad(datos)
+        tiempos = st.session_state.get("tiempos", {})
+        st.caption(f"Tiempos medidos: carga inicial {tiempos.get('cargaInicial', 'N/D')} s · descarga y análisis de {ticker} "
+                   f"{tiempos.get(ticker, 'N/D')} s (de ellos, modelos y señal {datos.get('duracionAnalisisSeg', 0)} s) · "
+                   f"consultas a la IA hoy: {llamadasHoy()}.")
+        for tono, texto in datos.get("calidad", []):
+            if "descartados" in texto or "faltantes" in texto or "huecos" in texto:
+                st.caption(("⚠ " if tono == "alerta" else "✓ ") + texto)
 
 
 principal()

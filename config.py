@@ -179,6 +179,12 @@ APP_PUERTO = leerEntero("APP_PUERTO", 8501)
 
 # Vigencia del cache en horas (el proyecto es manual, no de tiempo real)
 CACHE_HORAS_VIGENCIA = leerEntero("CACHE_HORAS_VIGENCIA", 24)
+# Comision por operacion (fraccion) que descuenta el backtest al entrar o salir del fondo
+COMISION_OPERACION = leerDecimal("COMISION_OPERACION", 0.001)
+# Proteccion del LLM: maximo de llamadas por dia (informes + chat) y precios por millon de tokens para estimar el costo
+LLM_MAXIMO_LLAMADAS_DIA = leerEntero("LLM_MAXIMO_LLAMADAS_DIA", 60)
+GEMINI_PRECIO_ENTRADA_USD_MILLON = leerDecimal("GEMINI_PRECIO_ENTRADA_USD_MILLON", 0.10)
+GEMINI_PRECIO_SALIDA_USD_MILLON = leerDecimal("GEMINI_PRECIO_SALIDA_USD_MILLON", 0.40)
 
 # Cantidad maxima de semanas pasadas que se guardan recalculadas en memoria
 SEMANAS_EN_MEMORIA = leerEntero("SEMANAS_EN_MEMORIA", 8)

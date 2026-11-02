@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from config import RETORNO_ESPERADO_ACCIONES, VOLATILIDAD_ACCIONES_RESPALDO
+from config import LLM_MAXIMO_LLAMADAS_DIA, RETORNO_ESPERADO_ACCIONES, VOLATILIDAD_ACCIONES_RESPALDO
 from src.analisisBonos import (
     proyectarCartera,
     proyectarInversion,
@@ -53,6 +53,7 @@ from src.motorPrescriptivo import (
     conclusionSeleccion,
     explicacionDeRespaldo,
     generarExplicacionLLM,
+    llamadasHoy,
     proveedorListo,
 )
 from src.utilidades import esNulo, formatearMoneda, formatearPorcentaje
@@ -760,16 +761,45 @@ def dibujarExplicacionIa(datos, perfil, proveedorInfo, decision):
     clave = f"explicacion_{datos['ticker']}_{perfil}_{marca}_{abs(hash(huella))}"
     if st.button("Explicar mi decisión con IA", type="primary", key="botonInformeIa"):
         with st.spinner("La IA está redactando el informe…"):
-            texto, usado, sospechosas = generarExplicacionLLM(construirContexto(datos, perfil, decision), perfil, proveedorInfo)
+            texto, usado, sospechosas, informe, detalle = generarExplicacionLLM(construirContexto(datos, perfil, decision), perfil, proveedorInfo)
             st.session_state[clave] = {"texto": texto or explicacionDeRespaldo(datos, perfil, decision.get("conclusion")),
-                                       "proveedor": usado if texto else None, "sospechosas": sospechosas}
+                                       "proveedor": usado if texto else None, "sospechosas": sospechosas, "informe": informe,
+                                       "detalle": detalle}
     guardado = st.session_state.get(clave)
     if not guardado:
-        st.caption("Un resumen en palabras de tu decisión, el fondo, los bonos que elegiste y cuánto podrías ganar.")
+        st.caption("Un resumen en palabras de tu decisión, el fondo, los bonos que elegiste y cuánto podrías ganar. "
+                   f"Consultas a la IA hoy: {llamadasHoy()} de {LLM_MAXIMO_LLAMADAS_DIA}.")
         return
+    detalle = guardado.get("detalle") or {}
+    if detalle.get("limite"):
+        st.warning(detalle["problemas"][0] + " Este informe se armó con las reglas de la app.")
+    elif not guardado["proveedor"]:
+        st.warning("La IA no respondió con un formato válido" + (f" ({'; '.join(detalle.get('problemas', []))})" if detalle.get("problemas") else "")
+                   + ". Este informe se armó con las reglas de la app.")
+    informe = guardado.get("informe")
+    if informe:
+        if not informe.get("accionCoincide"):
+            st.warning(f"La IA propuso «{informe.get('accionDelLlm')}», distinto de la conclusión de las reglas («{informe['accion']}»). "
+                       "Se muestra la de las reglas: la decisión la fijan ellas, la IA solo la explica.")
+        filaTarjetas([
+            {"etiqueta": "Acción sugerida", "valor": informe["accion"], "nota": "Fijada por las reglas; la IA la explica"},
+            {"etiqueta": "Nivel de confianza", "valor": informe["nivelConfianza"].capitalize(),
+             "nota": "Según factores activos, habilidad del modelo y noticias"},
+            {"etiqueta": "Riesgos señalados", "valor": str(len(informe["riesgos"])), "nota": "; ".join(informe["riesgos"])[:120]},
+            {"etiqueta": "Alternativas", "valor": str(len(informe.get("alternativas", []))),
+             "nota": "; ".join(informe.get("alternativas", []))[:120] or "Ninguna"},
+        ])
     if guardado["sospechosas"]:
         st.warning("Revisa estas cifras: no coinciden con los datos del análisis: " + ", ".join(guardado["sospechosas"]))
     st.markdown(guardado["texto"])
+    if guardado["proveedor"]:
+        costo = detalle.get("costoUsd")
+        tokens = (f"{detalle.get('tokensEntrada') or 0:,} tokens de entrada y {detalle.get('tokensSalida') or 0:,} de salida"
+                  if detalle.get("tokensEntrada") is not None else "tokens no reportados")
+        st.caption(f"Generado por la IA en {detalle.get('duracionSeg', 0):.1f} s · {tokens}"
+                   + (f" · costo estimado {costo:.4f} USD (≈ {costo * 100:.2f} USD por cada 100 informes)" if costo else
+                      (" · sin costo (modelo local)" if costo == 0 else ""))
+                   + f" · formato validado{' con avisos' if detalle.get('problemas') else ''} · registrado en data/salidas/recomendaciones.csv.")
     st.download_button("Descargar informe", data=guardado["texto"],
                        file_name=f"informe_{datos['ticker']}_{perfil}_{datetime.now():%Y%m%d}.md", mime="text/markdown")
 

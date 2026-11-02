@@ -1,0 +1,15 @@
+.env
+.streamlit/secrets.toml
+data/cache/*
+data/salidas/*
+__pycache__/
+*.pyc
+.ruff_cache/
+.pytest_cache/
+.ipynb_checkpoints/
+.venv/
+venv/
+.vscode/
+.git/
+notebooks/
+tests/

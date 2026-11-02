@@ -54,8 +54,13 @@ def construirTablaNav(serieNav, volumen=None, distribuciones=None):
     tabla["nav"] = pd.to_numeric(serieNav.values, errors="coerce")
     tabla["volumen"] = volumen.values if volumen is not None else np.nan
     tabla["distribucion"] = pd.to_numeric(distribuciones.values, errors="coerce") if distribuciones is not None else np.nan
+    crudos = len(tabla)
     tabla = tabla.dropna(subset=["nav"])
+    tabla = tabla.loc[tabla["nav"] > 0]  # un precio cero o negativo es un error de la fuente
     tabla = tabla[~tabla.index.duplicated(keep="last")].sort_index()
+    # Cuantos registros se descartaron en la limpieza (valores faltantes, no numericos, <= 0 y fechas duplicadas)
+    tabla.attrs["registrosCrudos"] = int(crudos)
+    tabla.attrs["registrosDescartados"] = int(crudos - len(tabla))
     tabla["retornoDiario"] = tabla["nav"].pct_change()
     tabla["retornoAcumulado"] = (tabla["nav"] / tabla["nav"].iloc[0]) - 1
     return tabla

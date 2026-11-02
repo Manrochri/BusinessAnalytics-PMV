@@ -25,6 +25,9 @@ import requests
 from config import (
     GEMINI_API_KEY,
     GEMINI_MODELO,
+    GEMINI_PRECIO_ENTRADA_USD_MILLON,
+    GEMINI_PRECIO_SALIDA_USD_MILLON,
+    LLM_MAXIMO_LLAMADAS_DIA,
     GEMINI_TEMPERATURA,
     GEMINI_TIMEOUT,
     GEMINI_URL,
@@ -39,6 +42,7 @@ from config import (
 from src.catalogoBonos import PARAMETROS_PERFIL, PERFILES
 from src.catalogoFondosMutuos import costoAcumulado
 from src.utilidades import esNulo, formatearPorcentaje, numeroSeguro, registrarEvento
+from src.registroLlm import llamadasHoy, registrarRecomendacion
 
 URL_OLLAMA = f"{OLLAMA_HOST}:{OLLAMA_PUERTO}"
 URL_GEMINI = f"{GEMINI_URL}/{GEMINI_MODELO}:generateContent"
@@ -826,29 +830,109 @@ INSTRUCCION_SISTEMA = (
 )
 
 
+# Salida ESTRUCTURADA del informe: campos fijos que se validan antes de mostrarlos
+CAMPOS_INFORME = {
+    "accion": str, "justificacion": str, "comportamientoDelFondo": str, "bonosYAsignacion": str,
+    "riesgos": list, "nivelConfianza": str, "alternativas": list,
+}
+NIVELES_CONFIANZA = ("alta", "media", "baja")
+ESQUEMA_INFORME_GEMINI = {
+    "type": "object",
+    "properties": {
+        "accion": {"type": "string"}, "justificacion": {"type": "string"}, "comportamientoDelFondo": {"type": "string"},
+        "bonosYAsignacion": {"type": "string"}, "riesgos": {"type": "array", "items": {"type": "string"}},
+        "nivelConfianza": {"type": "string", "enum": list(NIVELES_CONFIANZA)},
+        "alternativas": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": list(CAMPOS_INFORME),
+}
+
+
 def construirPromptExplicacion(contexto, perfil):
-    """Mensaje de sistema y plantilla del informe (compartidos por Qwen3 y Gemini)."""
+    """Mensaje de sistema y plantilla del informe (compartidos por Qwen3 y Gemini). La respuesta es un JSON con campos fijos."""
     plantilla = f"""Explica este análisis para un inversor de perfil {perfil}.
 
 DATOS (JSON):
 {json.dumps(contexto, ensure_ascii=False, indent=2, default=str)}
 
-Escribe exactamente estas cuatro secciones en markdown:
+Responde SOLO con un objeto JSON (sin markdown alrededor) con exactamente estas claves:
+- "accion": copia literal de 'conclusion.decision' (p. ej. "Invertir", "Esperar", "No invertir por ahora").
+- "justificacion": 3 a 5 frases. Empieza con 'conclusion.como'. Luego sus dos razones: el veredicto del fondo para el perfil ('conclusion.veredicto' y 'conclusion.motivoFondo') y el momento de entrada, explicado con los factores de 'senal.factores' (puntos de cada uno y cuáles no participan y por qué). No la justifiques más allá de esos datos.
+- "comportamientoDelFondo": 2 o 3 frases con los indicadores (retorno, volatilidad, peor caída, comparación con la referencia) y, si 'fondo.esFondoMutuo', su gasto anual, costo en 10 años y monto mínimo.
+- "bonosYAsignacion": si 'seleccionDelUsuario' no es nulo, el fondo y los bonos específicos elegidos (emisor, vencimiento, rendimiento esperado, veredicto y motivo), su coherencia con el perfil y la proyección; si no, un resumen de 'bonosDelPerfil'. Luego la asignación. Distingue la ganancia de la renta fija ('seleccionDelUsuario.proyeccion') de la de toda la cartera ('proyeccionCarteraCompleta').
+- "riesgos": lista de 3 riesgos concretos que se desprenden de los datos (frases cortas).
+- "nivelConfianza": "alta", "media" o "baja", según cuántos factores de la señal participan, si el modelo tiene habilidad ('pronostico.tieneHabilidad') y si hay noticias suficientes.
+- "alternativas": lista de 1 a 3 alternativas concretas (p. ej. 'conclusion.alternativa', liquidez, entrar de a poco); vacía si no aplica.
 
-### Cómo se ha comportado el fondo
-Dos o tres frases con los indicadores.
-
-### ¿Invertir o no?
-Empieza con 'conclusion.decision' y su explicación ('conclusion.como'). Luego sus dos razones: el veredicto del fondo para el perfil y el momento de entrada, explicado con los factores de 'senal.factores' (puntos de cada uno, y cuáles no participan y por qué). No la justifiques más allá de esos datos.
-
-### Bonos para tu perfil y asignación
-Si 'seleccionDelUsuario' no es nulo, explica el fondo y los bonos específicos que eligió (emisor, vencimiento, rendimiento esperado, veredicto y su motivo), su coherencia con el perfil y la proyección. Si no, resume 'bonosDelPerfil'. Luego la asignación. Distingue la ganancia de la renta fija ('seleccionDelUsuario.proyeccion') de la de toda la cartera ('proyeccionCarteraCompleta'), que incluye las acciones.
-
-### Riesgos a vigilar
-Tres viñetas con riesgos concretos que se desprenden de los datos.
-
-Máximo 350 palabras. No repitas el JSON."""
+Máximo 350 palabras en total. Español claro. No inventes cifras: usa solo las del JSON."""
     return INSTRUCCION_SISTEMA, plantilla
+
+
+def parsearInformeEstructurado(texto, conclusion=None):
+    """
+    Convierte la respuesta del LLM en el dict del informe y la VALIDA: claves,
+    tipos, nivel de confianza permitido y que la accion coincida con la
+    conclusion de las reglas (si no, se corrige y se anota). Devuelve
+    (informe o None, listaDeProblemas).
+    """
+    if not texto:
+        return None, ["respuesta vacía"]
+    crudo = texto.strip()
+    if crudo.startswith("```"):
+        crudo = re.sub(r"^```(?:json)?\s*|\s*```$", "", crudo, flags=re.S).strip()
+    inicio, fin = crudo.find("{"), crudo.rfind("}")
+    if inicio < 0 or fin < 0:
+        return None, ["la respuesta no es JSON"]
+    try:
+        datos = json.loads(crudo[inicio:fin + 1])
+    except ValueError as error:
+        return None, [f"JSON inválido: {error}"]
+    if not isinstance(datos, dict):
+        return None, ["la respuesta no es un objeto JSON"]
+    problemas = []
+    informe = {}
+    for campo, tipo in CAMPOS_INFORME.items():
+        valor = datos.get(campo)
+        if tipo is list:
+            if isinstance(valor, str):
+                valor = [v.strip(" -•") for v in valor.split("\n") if v.strip(" -•")]
+            if not isinstance(valor, list):
+                problemas.append(f"falta la lista '{campo}'")
+                valor = []
+            informe[campo] = [str(v).strip() for v in valor if str(v).strip()]
+        else:
+            if not isinstance(valor, str) or not valor.strip():
+                problemas.append(f"falta el campo '{campo}'")
+                valor = ""
+            informe[campo] = str(valor).strip()
+    nivel = informe["nivelConfianza"].lower().strip(". ")
+    if nivel not in NIVELES_CONFIANZA:
+        problemas.append(f"nivel de confianza no permitido: '{informe['nivelConfianza']}'")
+        nivel = "media"
+    informe["nivelConfianza"] = nivel
+    if conclusion and conclusion.get("decision") and informe["accion"].strip().lower() != str(conclusion["decision"]).strip().lower():
+        problemas.append(f"la acción del LLM ('{informe['accion']}') no coincide con la conclusión de las reglas; se usa la de las reglas")
+        informe["accionDelLlm"] = informe["accion"]
+        informe["accion"] = conclusion["decision"]
+    informe["accionCoincide"] = "accionDelLlm" not in informe
+    if len(informe["riesgos"]) < 2:
+        problemas.append("menos de dos riesgos")
+    faltanCampos = any(p.startswith("falta el campo") for p in problemas) or "la respuesta no es JSON" in problemas
+    return (None if faltanCampos else informe), problemas
+
+
+def informeAMarkdown(informe):
+    """Texto en markdown del informe estructurado (lo que se muestra y se descarga)."""
+    if not informe:
+        return ""
+    lineas = [f"### ¿Invertir o no? · {informe['accion']}", informe["justificacion"],
+              f"\n*Nivel de confianza: {informe['nivelConfianza']}.*",
+              "\n### Cómo se ha comportado el fondo", informe["comportamientoDelFondo"],
+              "\n### Bonos para tu perfil y asignación", informe["bonosYAsignacion"],
+              "\n### Riesgos a vigilar"] + [f"- {r}" for r in informe["riesgos"]]
+    if informe.get("alternativas"):
+        lineas += ["\n### Alternativas"] + [f"- {a}" for a in informe["alternativas"]]
+    return "\n".join(lineas)
 
 
 def _numerosPermitidos(objeto, salida=None):
@@ -920,9 +1004,11 @@ def generarExplicacionQwen(contexto, perfil="Moderado"):
     """Informe con Qwen3 via Ollama. Devuelve el texto o None."""
     sistema, plantilla = construirPromptExplicacion(contexto, perfil)
     cuerpo = {"model": OLLAMA_MODELO, "prompt": plantilla, "system": sistema, "stream": False, "think": False,
-              "options": {"temperature": OLLAMA_TEMPERATURA, "num_predict": 900}}
+              "format": "json", "options": {"temperature": OLLAMA_TEMPERATURA, "num_predict": 1200}}
     try:
-        texto = limpiarRazonamiento(_llamarOllama(cuerpo, "/api/generate").get("response", ""))
+        respuesta = _llamarOllama(cuerpo, "/api/generate")
+        texto = limpiarRazonamiento(respuesta.get("response", ""))
+        _ULTIMO_USO.update(entrada=respuesta.get("prompt_eval_count"), salida=respuesta.get("eval_count"))
         return texto or None
     except requests.exceptions.RequestException as error:
         registrarEvento(f"Error al consultar Qwen3: {error}", "ERROR")
@@ -939,22 +1025,30 @@ def extraerTextoGemini(datosRespuesta):
     return texto or None
 
 
-def _llamarGemini(contenidos, sistema, maximoTokens):
+_ULTIMO_USO = {"entrada": None, "salida": None}  # tokens de la ultima llamada (para el costo)
+
+
+def _llamarGemini(contenidos, sistema, maximoTokens, esquemaJson=None):
     if not GEMINI_API_KEY:
         return None
+    generacion = {"temperature": GEMINI_TEMPERATURA, "maxOutputTokens": maximoTokens, "thinkingConfig": {"thinkingLevel": "low"}}
+    if esquemaJson:  # salida estructurada garantizada por la API
+        generacion.update(responseMimeType="application/json", responseSchema=esquemaJson)
     cuerpo = {
         "contents": contenidos,
         "systemInstruction": {"parts": [{"text": sistema}]},
         # En Gemini 3.x el razonamiento cuenta dentro de maxOutputTokens: se baja
         # su nivel y se deja margen para que la respuesta no se corte.
-        "generationConfig": {"temperature": GEMINI_TEMPERATURA, "maxOutputTokens": maximoTokens,
-                             "thinkingConfig": {"thinkingLevel": "low"}},
+        "generationConfig": generacion,
     }
     try:
         respuesta = requests.post(URL_GEMINI, headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"},
                                   json=cuerpo, timeout=GEMINI_TIMEOUT)
         respuesta.raise_for_status()
-        return extraerTextoGemini(respuesta.json())
+        datos = respuesta.json()
+        uso = datos.get("usageMetadata", {}) or {}
+        _ULTIMO_USO.update(entrada=uso.get("promptTokenCount"), salida=uso.get("candidatesTokenCount"))
+        return extraerTextoGemini(datos)
     except requests.exceptions.RequestException as error:
         registrarEvento(f"Error al consultar Gemini: {error}", "ERROR")
         return None
@@ -963,23 +1057,69 @@ def _llamarGemini(contenidos, sistema, maximoTokens):
 def generarExplicacionGemini(contexto, perfil="Moderado"):
     """Informe con Gemini (respaldo). Devuelve el texto o None."""
     sistema, plantilla = construirPromptExplicacion(contexto, perfil)
-    return _llamarGemini([{"role": "user", "parts": [{"text": plantilla}]}], sistema, 2048)
+    return _llamarGemini([{"role": "user", "parts": [{"text": plantilla}]}], sistema, 2048, ESQUEMA_INFORME_GEMINI)
+
+
+def costoLlamada(proveedor, tokensEntrada, tokensSalida):
+    """Costo estimado en USD de una llamada (Gemini por tokens; Qwen3 local no cuesta)."""
+    if proveedor != "gemini" or tokensEntrada is None or tokensSalida is None:
+        return 0.0 if proveedor == "qwen3" else None
+    return float(tokensEntrada / 1e6 * GEMINI_PRECIO_ENTRADA_USD_MILLON + tokensSalida / 1e6 * GEMINI_PRECIO_SALIDA_USD_MILLON)
+
+
+def limiteDiarioAlcanzado():
+    """True si ya se hicieron las llamadas al LLM permitidas hoy (informes + chat)."""
+    return llamadasHoy() >= LLM_MAXIMO_LLAMADAS_DIA
 
 
 def generarExplicacionLLM(contexto, perfil="Moderado", proveedorInfo=None):
     """
-    Informe con el proveedor que corresponda (reutiliza proveedorInfo si se
-    pasa). Devuelve (texto_o_None, proveedorUsado, cifrasNoVerificadas).
+    Informe ESTRUCTURADO con el proveedor que corresponda (reutiliza
+    proveedorInfo si se pasa). Valida el formato (un reintento si viene mal),
+    que la accion coincida con las reglas y que no haya cifras inventadas;
+    registra cada recomendacion emitida y respeta el limite diario.
+    Devuelve (texto_o_None, proveedorUsado, cifrasNoVerificadas, informe, detalle)
+    donde detalle = {problemas, tokensEntrada, tokensSalida, costoUsd, duracionSeg, limite}.
     """
+    detalle = {"problemas": [], "tokensEntrada": None, "tokensSalida": None, "costoUsd": None, "duracionSeg": 0.0, "limite": False}
     proveedor, estado, forzado = proveedorInfo or determinarProveedorActivo()
+    if limiteDiarioAlcanzado():
+        detalle["limite"] = True
+        detalle["problemas"].append(f"Se alcanzó el máximo de {LLM_MAXIMO_LLAMADAS_DIA} consultas a la IA por día.")
+        registrarEvento("LLM: límite diario alcanzado; se usa el informe de reglas.", "WARN")
+        return None, proveedor, [], None, detalle
+    conclusion = (contexto or {}).get("conclusion") or {}
     intentos = [proveedor] if forzado else [proveedor] + [p for p in ("qwen3", "gemini") if p != proveedor]
+    inicio = time.time()
     for candidato in intentos:
         if candidato == proveedor and not proveedorListo(estado):
             continue
-        texto = generarExplicacionQwen(contexto, perfil) if candidato == "qwen3" else generarExplicacionGemini(contexto, perfil)
-        if texto:
-            return texto, candidato, validarCifrasInforme(texto, contexto)
-    return None, proveedor, []
+        for intento in range(2):  # un reintento si el formato llega mal
+            _ULTIMO_USO.update(entrada=None, salida=None)
+            texto = generarExplicacionQwen(contexto, perfil) if candidato == "qwen3" else generarExplicacionGemini(contexto, perfil)
+            if not texto:
+                break
+            informe, problemas = parsearInformeEstructurado(texto, conclusion)
+            detalle["problemas"] = problemas
+            if informe is None and intento == 0:
+                registrarEvento(f"Informe de {candidato} con formato inválido ({'; '.join(problemas)}): se reintenta.", "WARN")
+                continue
+            if informe is None:
+                break
+            markdown = informeAMarkdown(informe)
+            sospechosas = validarCifrasInforme(markdown, contexto)
+            detalle.update(tokensEntrada=_ULTIMO_USO["entrada"], tokensSalida=_ULTIMO_USO["salida"],
+                           costoUsd=costoLlamada(candidato, _ULTIMO_USO["entrada"], _ULTIMO_USO["salida"]),
+                           duracionSeg=round(time.time() - inicio, 2))
+            registrarRecomendacion({
+                "tipo": "informe", "ticker": (contexto.get("fondo") or {}).get("ticker"), "perfil": perfil, "proveedor": candidato,
+                "modelo": GEMINI_MODELO if candidato == "gemini" else OLLAMA_MODELO, "accion": informe["accion"],
+                "accionCoincide": informe["accionCoincide"], "nivelConfianza": informe["nivelConfianza"],
+                "cifrasSospechosas": len(sospechosas), "problemasFormato": "; ".join(problemas), "tokensEntrada": detalle["tokensEntrada"],
+                "tokensSalida": detalle["tokensSalida"], "costoUsd": detalle["costoUsd"], "duracionSeg": detalle["duracionSeg"],
+            })
+            return markdown, candidato, sospechosas, informe, detalle
+    return None, proveedor, [], None, detalle
 
 
 MAXIMO_MENSAJES_HISTORIAL = 16
@@ -998,8 +1138,12 @@ def construirSistemaChat(contexto, perfil="Moderado"):
 def chatearConLLM(mensajes, contexto, perfil="Moderado", proveedorInfo=None):
     """Chat con el proveedor que corresponda. Devuelve (texto_o_None, proveedorUsado)."""
     proveedor, estado, forzado = proveedorInfo or determinarProveedorActivo()
+    if limiteDiarioAlcanzado():
+        registrarEvento("LLM: límite diario alcanzado; el chat no responde.", "WARN")
+        return None, proveedor
     sistema = construirSistemaChat(contexto, perfil)
     historial = mensajes[-MAXIMO_MENSAJES_HISTORIAL:]
+    inicio = time.time()
     intentos = [proveedor] if forzado else [proveedor] + [p for p in ("qwen3", "gemini") if p != proveedor]
     for candidato in intentos:
         if candidato == proveedor and not proveedorListo(estado):
@@ -1017,6 +1161,11 @@ def chatearConLLM(mensajes, contexto, perfil="Moderado", proveedorInfo=None):
                           for m in historial]
             texto = _llamarGemini(contenidos, sistema, 1024)
         if texto:
+            registrarRecomendacion({"tipo": "chat", "ticker": (contexto.get("fondo") or {}).get("ticker"), "perfil": perfil,
+                                    "proveedor": candidato, "modelo": GEMINI_MODELO if candidato == "gemini" else OLLAMA_MODELO,
+                                    "accion": "", "tokensEntrada": _ULTIMO_USO["entrada"], "tokensSalida": _ULTIMO_USO["salida"],
+                                    "costoUsd": costoLlamada(candidato, _ULTIMO_USO["entrada"], _ULTIMO_USO["salida"]),
+                                    "duracionSeg": round(time.time() - inicio, 2)})
             return texto, candidato
     return None, proveedor
 

@@ -16,6 +16,8 @@ Evaluacion honesta:
     se mide en prueba.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
@@ -31,7 +33,7 @@ from src.preparacionDatos import (
     filasEtiquetadas,
     listarColumnasPredictoras,
 )
-from src.utilidades import esNulo, registrarEvento
+from src.utilidades import esNulo, nombreSeguro, registrarEvento
 
 DIAS_HABILES_ANIO = 252
 NOMBRE_PASEO = "Línea base: paseo aleatorio"
@@ -261,6 +263,65 @@ def entrenarYEvaluar(tablaCaracteristicas, horizonte=21, incluirSentimiento=None
         f"cobertura de la banda 90%: {resultado['cobertura90']:.0f}%."
     )
     return resultado
+
+
+def evaluarDeterioro(modelo, resumenBacktest=None, clasificador=None):
+    """
+    Senales de que el modelo o la senal dejaron de funcionar bien (para
+    decidir reentrenar o dejar de usarlos). Devuelve lista de (tono, texto).
+    """
+    alertas = []
+    if not modelo or not modelo.get("exito"):
+        return alertas
+    habilidad = modelo.get("habilidad")
+    if not esNulo(habilidad) and habilidad <= HABILIDAD_MINIMA:
+        alertas.append(("ambar", f"El modelo no supera a la línea base en prueba (habilidad {habilidad:+.1%}; mínimo {HABILIDAD_MINIMA:.0%}): "
+                                 "el pronóstico no entra a la señal hasta que vuelva a superarla."))
+    cobertura = modelo.get("cobertura90")
+    if cobertura is not None and not (80 <= cobertura <= 98):
+        alertas.append(("ambar", f"La banda del 90% contuvo al {cobertura:.0f}% de los resultados reales (esperado 80–98%): "
+                                 "el rango está " + ("demasiado estrecho" if cobertura < 80 else "demasiado ancho") + "."))
+    r = resumenBacktest or {}
+    if r.get("retornoAnualEstrategia") is not None and r.get("retornoAnualComprarMantener") is not None:
+        if r["retornoAnualEstrategia"] < r["retornoAnualComprarMantener"] - 0.01:
+            alertas.append(("ambar", f"En el backtest, seguir la señal rindió {r['retornoAnualEstrategia']:+.1%} anual frente a "
+                                     f"{r['retornoAnualComprarMantener']:+.1%} de comprar y mantener (con comisiones): la señal no está aportando."))
+    c = clasificador or {}
+    if c.get("modelo") is not None and not c.get("superaPersistencia"):
+        alertas.append(("ambar", "El clasificador de riesgo no supera a la persistencia: no se usa en las alertas."))
+    return alertas
+
+
+def guardarModelo(resultadoModelo, ticker, carpeta):
+    """
+    Guarda el predictor entrenado (joblib) con sus columnas y horizonte, para
+    servirlo sin reentrenar. Devuelve la ruta o None si no se pudo.
+    """
+    try:
+        import joblib
+
+        carpeta = Path(carpeta)
+        carpeta.mkdir(parents=True, exist_ok=True)
+        ruta = carpeta / f"modelo_{nombreSeguro(ticker)}_{resultadoModelo['horizonte']}d.joblib"
+        joblib.dump({"predictor": resultadoModelo["predictor"], "columnas": resultadoModelo["columnas"],
+                     "horizonte": resultadoModelo["horizonte"], "nombre": resultadoModelo["nombrePredictor"],
+                     "habilidad": resultadoModelo.get("habilidad"), "entrenadoEl": pd.Timestamp.now().isoformat(),
+                     "cuantilesResiduo": resultadoModelo.get("cuantilesResiduo")}, ruta)
+        return ruta
+    except Exception as error:  # sin joblib o sin permisos: no detiene el analisis
+        registrarEvento(f"No se pudo guardar el modelo: {error}", "WARN")
+        return None
+
+
+def cargarModelo(ruta):
+    """Lee un modelo guardado con guardarModelo (dict) o None."""
+    try:
+        import joblib
+
+        return joblib.load(ruta)
+    except Exception as error:
+        registrarEvento(f"No se pudo leer el modelo guardado: {error}", "WARN")
+        return None
 
 
 def pronosticarHorizonte(resultadoModelo, tablaCaracteristicas, navActual, fechaUltima, horizonte):

@@ -11,7 +11,9 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-from config import NOTICIAS_LIMITE, TICKER_RENTA_VARIABLE
+import time
+
+from config import NOTICIAS_LIMITE, RUTA_SALIDAS, TICKER_RENTA_VARIABLE
 from src.analisisBonos import descargarUniversoBonos, rankingBonos, recortarUniverso
 from src.analisisFondosMutuos import descargarUniversoMutuos, rankingFondosMutuos, recortarUniversoMutuos
 from src.backtest import backtestSenal
@@ -44,7 +46,9 @@ from src.datosNoticias import (
 from src.modeloClasificacionRiesgo import entrenarClasificadorRiesgo, etiquetarRiesgo
 from src.modeloPredictivo import (
     entrenarYEvaluar,
+    evaluarDeterioro,
     evaluarRiesgoFuturo,
+    guardarModelo,
     obtenerImportanciaVariables,
     pronosticarHorizonte,
     resumirPronostico,
@@ -183,6 +187,7 @@ def ejecutarAnalisis(base, dias, fechaCorte=None):
     Devuelve un diccionario con lo que consumen los dashboards.
     """
     resultado = {"exito": False, "mensaje": "", "avisos": [], "fechaEjecucion": datetime.now()}
+    inicioTiempo = time.time()
     if not base:
         resultado["mensaje"] = "No se pudo obtener el histórico del fondo."
         return resultado
@@ -259,6 +264,13 @@ def ejecutarAnalisis(base, dias, fechaCorte=None):
     rankingsMutuosPorPerfil = {perfil: rankingFondosMutuos(universoMutuos, perfil, tasaLibre, rankingsPorPerfil[perfil][0])
                                for perfil in PERFILES}
     backtest, resumenBacktest = backtestSenal(historico, historicoBenchmark, dias, tasaLibre, comparable)
+    # Modelo servido como archivo: se guarda el predictor del analisis actual (no el de fechas pasadas)
+    rutaModelo = guardarModelo(modelo, ticker, RUTA_SALIDAS) if modelo.get("exito") and fechaCorte is None else None
+    deterioro = evaluarDeterioro(modelo, resumenBacktest, clasificador)
+    descartados = getattr(base["historico"], "attrs", {}).get("registrosDescartados")
+    crudos = getattr(base["historico"], "attrs", {}).get("registrosCrudos")
+    if crudos:
+        calidad.append(("ok", f"Registros de precios descartados en la limpieza: {descartados} de {crudos} ({descartados / crudos:.2%})."))
 
     resultado.update(
         {
@@ -297,6 +309,9 @@ def ejecutarAnalisis(base, dias, fechaCorte=None):
             "curvaSeries": base.get("curvaSeries", {}), "curva": construirCurva(base.get("curvaSeries", {})), "backtest": backtest, "resumenBacktest": resumenBacktest,
             "validacion": validarRetrospectivamente(senal, resumenPron, base["historico"], fechaCorte, dias,
                                                     base["benchmark"], metricas.get("volatilidadAnual")),
+            "rutaModelo": str(rutaModelo) if rutaModelo else None, "deterioro": deterioro,
+            "registrosDescartados": descartados, "registrosCrudos": crudos,
+            "duracionAnalisisSeg": round(time.time() - inicioTiempo, 2),
         }
     )
     registrarEvento(f"Análisis de {ticker} completo: señal {senal['accion']} ({senal['puntaje']}).")

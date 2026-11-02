@@ -1,5 +1,5 @@
 # FundScope — Analítica de Fondos Mutuos con IA Generativa
-*NUeva versión*
+
 Aplicación web que analiza un fondo mutuo o ETF combinando **datos de mercado** (Yahoo Finance) con **noticias financieras** gratuitas (titulares de Yahoo Finance y tono diario de la prensa de GDELT), y que recomienda **qué hacer según el perfil del inversor**, incluidos los **bonos** que le convienen y **cuánto podría ganar** con ellos.
 
 Las recomendaciones se calculan con reglas auditables y modelos de machine learning evaluados contra líneas base. **Qwen3 en Ollama** (local) las explica en lenguaje natural; Gemini es un respaldo opcional.
@@ -12,14 +12,14 @@ Las recomendaciones se calculan con reglas auditables y modelos de machine learn
 
 ## 1. Qué hace cada pestaña
 
-En la **parte superior** de la app se eligen el **perfil del inversor** (Conservador, Moderado o Agresivo) y el **fondo a analizar**. La lista de fondos es la del grupo del perfil, ordenada por el ranking (🟢 recomendable, 🟡 aceptable, 🔴 no recomendable), y el primero se elige por defecto; con «Otro ticker…» se puede analizar cualquier fondo (p. ej. VFIAX). El benchmark se elige solo: BIL (letras del Tesoro) para Conservador, AGG (mercado de bonos) para Moderado y Agresivo, y `^SP500TR` para fondos fuera del catálogo.
+La app es un **flujo de 3 pasos**: **1 · tu perfil** (tres tarjetas: Conservador, Moderado, Agresivo), **2 · el fondo** (una tarjeta por fondo de bonos del perfil, del mejor al peor según el ranking, con su veredicto 🟢🟡🔴 y rendimiento; el primero queda elegido; «Analizar otro ticker» permite cualquier fondo, p. ej. VFIAX) y **3 · el resultado** (las pestañas). Una barra arriba muestra en qué paso estás y la conclusión. El benchmark se elige solo: BIL (letras del Tesoro) para Conservador, AGG (mercado de bonos) para Moderado y Agresivo, y `^SP500TR` para fondos fuera del catálogo.
 
 | Pestaña | Pregunta | Contenido |
 | --- | --- | --- |
-| **Descriptivo** | ¿Qué pasó? | NAV, rentabilidad vs benchmark de retorno total, Sharpe, beta, VaR, caída máxima, riesgo, sentimiento de noticias, el **ranking de fondos de bonos del perfil** (o la indicación de **no invertir** en bonos por ahora) y el **explorador de bonos y emisores** que contiene cada fondo |
-| **Predictivo** | ¿Qué podría pasar? | Pronóstico directo del NAV con banda del 90% calibrada, comparación de modelos contra líneas base, y **riesgo de los próximos 3 meses** con un RandomForestClassifier |
-| **Prescriptivo** | ¿Qué hago? | **Resumen de tu decisión** arriba (se actualiza con lo que elijas) y cuatro pasos: 1) **cómo invertir** en tu fondo: completo, bonos específicos o liquidez, 2) casilla **«Comprar»** en la tabla de bonos de su cartera, 3) monto y **proyección de la ganancia** de tu elección (★) frente a las alternativas, 4) asignación y plan de acción con CUSIP y lotes. Al final: por qué la señal, backtest, perfiles e informe con IA |
-| **Asesor IA** | Dudas puntuales | Chat sobre los datos del análisis y el perfil elegido |
+| **🧭 ¿Qué hago?** (Prescriptivo, primera) | ¿Invierto o no? | Conclusión «¿Invertir en X?» (veredicto del fondo + momento), tu renta fija, su rendimiento y la ganancia de toda tu cartera. Debajo, los pasos: cómo invertir (fondo completo, bonos específicos o liquidez), bonos con casilla «Comprar» (solo si eliges bonos), cuánto podrías ganar (toda tu cartera / tu renta fija) y tu plan. Informe con IA y detalle plegado |
+| **📊 ¿Qué pasó?** (Descriptivo) | ¿Cómo le fue al fondo? | 4 cifras clave, valor del fondo, comparación con su benchmark, ranking de fondos de bonos del perfil y prensa; el resto (más indicadores, bonos y emisores, titulares, posiciones) plegado |
+| **🔮 ¿Qué podría pasar?** (Predictivo) | ¿Qué esperar? | Rentabilidad proyectada, rango, escenario adverso y confiabilidad del modelo, con su gráfico; el Random Forest de riesgo, la comparación de modelos y las variables, plegados |
+| **💬 Asesor IA** | Dudas puntuales | Chat que parte de la misma conclusión |
 
 ---
 
@@ -61,6 +61,44 @@ pytest
 jupyter notebook notebooks/FundScope_CRISP_ML_Q.ipynb
 ```
 
+### Configuración: `.env` en local, secretos en la nube
+
+`config.py` busca cada variable en este orden y usa la primera que tenga valor:
+
+1. Variables de entorno del sistema.
+2. El archivo `.env` (local; está en `.gitignore`).
+3. Los **secretos de Streamlit**: en Community Cloud, *Settings → Secrets*; en local, `.streamlit/secrets.toml` (opcional).
+4. El valor por defecto de `config.py`.
+
+No hace falta borrar ni renombrar el `.env`: en tu computadora manda el `.env`, y en la nube (donde el `.env` no existe) mandan los secretos. La barra lateral muestra de dónde se leyó la configuración.
+
+### Correr con Docker
+
+Con [Docker](https://docs.docker.com/get-docker/) instalado, desde la carpeta del proyecto:
+
+```bash
+docker build -t fundscope .
+docker run -p 8501:8501 --env-file .env fundscope
+```
+
+Luego abre `http://localhost:8501`. El `Dockerfile` instala `requirements.txt` sobre Python 3.12, copia el código y arranca `streamlit run app.py`. La configuración se pasa con `--env-file .env` (no se copia dentro de la imagen; `.dockerignore` lo excluye junto con la caché y las salidas). Para conservar la caché y el registro de recomendaciones entre reinicios, monta la carpeta de datos: `-v $(pwd)/data:/app/data`.
+
+### Publicar en Streamlit Community Cloud
+
+1. Sube el proyecto a GitHub (sin `.env` ni `.streamlit/secrets.toml`: ambos están en `.gitignore`).
+2. En [share.streamlit.io](https://share.streamlit.io) → *Create app* → elige el repositorio, la rama y `app.py` como archivo principal.
+3. En *Advanced settings* elige **Python 3.12**.
+4. En *Secrets*, pega el contenido de `.streamlit/secrets.toml.example` con tus valores. Como mínimo:
+   ```toml
+   SEC_USER_AGENT = "FundScope TuNombre tu_correo@dominio.com"
+   GEMINI_API_KEY = "tu_clave"            # en la nube no hay Ollama
+   PROVEEDOR_LLM_FORZADO = "gemini"
+   ```
+   Pueden ir en el nivel raíz o dentro de una sección (`[fundscope]`); el nivel raíz tiene prioridad.
+5. *Deploy*. Para cambiar un secreto después: *Settings → Secrets*, guardar y reiniciar la app.
+
+Consideraciones: si la app es pública, cualquiera puede usar tu cuota de Gemini (puedes dejarla privada e invitar por correo). La caché (`data/cache`) se borra en cada reinicio de la nube, incluida la historia del tono de prensa. El plan gratuito tiene ~1 GB de memoria: las carteras de miles de bonos son lo más pesado.
+
 ---
 
 ## 4. Cómo usar la aplicación
@@ -93,14 +131,17 @@ FundScope/
 │   ├── modeloPredictivo.py        # Ridge, Random Forest, Gradient Boosting, XGBoost, ensamble y líneas base
 │   ├── modeloClasificacionRiesgo.py  # RandomForestClassifier del riesgo de los próximos 3 meses
 │   ├── catalogoBonos.py           # Bonos por perfil y parámetros de cada perfil
-│   ├── analisisBonos.py           # Ranking de fondos de bonos y proyección del fondo
+│   ├── catalogoFondosMutuos.py    # Fondos mutuos por perfil: clase, gasto, mínimo, ETF gemelo, referencia y tolerancias
+│   ├── analisisFondosMutuos.py    # Veredicto y ranking de los fondos mutuos de cada perfil
+│   ├── analisisBonos.py           # Ranking de fondos de bonos, proyección con aportes y cartera completa
+│   ├── portafolio.py              # Portafolio con varios fondos: pesos sugeridos, riesgo de la mezcla, costos
 │   ├── datosSec.py                # Cartera bono por bono (formulario N-PORT de la SEC)
 │   ├── bonosIndividuales.py       # TIR, duración, calidad implícita, emisores, plan de compra y proyección
 │   ├── motorPrescriptivo.py       # Señal, asignación, plan, IA generativa y validación de cifras
 │   ├── backtest.py                # Prueba histórica semanal de la señal
 │   ├── graficos.py / estilos.py / utilidades.py
-│   └── vistas/                    # descriptivo, predictivo, prescriptivo, asesor, bonos, comunes
-├── tests/                         # 39 pruebas sin red (datos sintéticos y un N-PORT de ejemplo)
+│   └── vistas/                    # descriptivo, predictivo, prescriptivo, portafolio, asesor, bonos, comunes
+├── tests/                         # 66 pruebas sin red (datos sintéticos y un N-PORT de ejemplo)
 ├── notebooks/FundScope_CRISP_ML_Q.ipynb
 └── data/cache, data/salidas
 ```
@@ -108,6 +149,25 @@ FundScope/
 ---
 
 ## 6. Cómo funciona por dentro
+
+### Fondos mutuos por perfil
+
+El paso 2 muestra los **fondos mutuos** del catálogo (`src/catalogoFondosMutuos.py`) para el perfil elegido: de acciones (VFIAX, VTSAX, FXAIX, SWPPX, VVIAX, VIGAX, VTIAX), mixtos (VWINX, VBIAX, VWELX) y de bonos (el gemelo de cada ETF del ranking: VBTLX, VICSX, VSBSX…). Cada tarjeta trae su veredicto para el perfil, lo que rinde y su gasto anual; los ETF de bonos quedan en un plegable.
+
+| Clase | Cómo se juzga para el perfil |
+|---|---|
+| Bonos | Con las mismas reglas que los ETF del ranking, sobre su propia historia (prima sobre la liquidez, Sharpe, volatilidad, caída, tendencia y vetos del perfil). Si no tiene historia suficiente, hereda la fila de su ETF gemelo. |
+| Acciones y mixtos | Volatilidad y peor caída de 3 años frente a la tolerancia del perfil (Conservador 12 % / −25 %, Moderado 20 % / −40 %, Agresivo 35 % / −60 %), relación rendimiento/riesgo (Sharpe) y tendencia. Más allá de 1.25× la tolerancia: «No recomendable». |
+
+La conclusión «¿Invertir o no?» cruza ese veredicto con el momento de entrada, igual que para los ETF; la alternativa que propone es de la misma clase. Para la renta fija del plan se prefiere el fondo mutuo gemelo cuando el fondo analizado es un fondo mutuo.
+
+**Costos y condiciones** (pestaña «¿Qué pasó?»): gasto anual (ficha de Yahoo o prospecto), costo acumulado por cada USD 10 000 a 1, 3, 5 y 10 años con 5 % anual (como el ejemplo del prospecto), monto mínimo de entrada, clase de participación, cargos (ninguno en los fondos del catálogo) y cómo se compra (una vez al día al precio de cierre). El plan avisa si tu parte de renta fija no alcanza el mínimo del fondo. **Rentabilidad como en el prospecto:** año a año frente a su referencia, mejor y peor trimestre y promedios a 1, 3, 5 y 10 años. La referencia de cada fondo mutuo es un ETF de su misma categoría (VOO, VTI, VXUS, AOK/AOR para los mixtos…).
+
+En la proyección puedes indicar un **aporte mensual**: entra al inicio de cada mes repartido como tu capital y el % anual se calcula como tasa interna de retorno. Comprar **bonos sueltos** de la cartera del fondo queda como opción avanzada dentro del paso 1.
+
+### Mi portafolio
+
+En la pestaña «Mi portafolio» eliges de 2 a 6 fondos del catálogo y los pesos (`src/portafolio.py`). «Sugerir pesos para mi perfil» prueba miles de mezclas al azar con la liquidez del perfil fija y elige la de mejor relación retorno/riesgo que (1) no supere la volatilidad del portafolio del perfil (Conservador 7 %, Moderado 11 %, Agresivo 16 %), (2) tenga la parte en acciones a ±15 pp de la del perfil y (3) reparta de verdad (cada fondo entre 5 % y 60 %); si nada cumple todo, relaja las condiciones en ese orden. El retorno esperado usa los mismos supuestos que el resto de la app (acciones al `RETORNO_ESPERADO_ACCIONES`, bonos a su rendimiento); la volatilidad, la peor caída y el aporte de cada fondo al riesgo salen de los retornos mensuales históricos de la mezcla, con la correlación real entre fondos. La proyección simula la mezcla con sus retornos mensuales (remuestreo por bloques) y admite aportes mensuales.
 
 ### Bonos por perfil
 
@@ -177,7 +237,9 @@ Se pronostica **directamente** el retorno al horizonte elegido. Datos divididos 
 | Nivel de riesgo | +1 / −2 | — |
 | Sentimiento: tono de prensa de 30 días frente a su último año (±1 desviación) | ±1 | ≥ 120 días de tono; si no, titulares (≥ 10 recientes, ±0.15) |
 
-Puntaje ≥ 3 → **COMPRAR** · ≤ −3 → **REDUCIR** · en medio → **MANTENER** (rango real −9.5 a +8.5). La señal mueve como máximo ±5 pp la renta variable del perfil. Un **backtest semanal** muestra qué pasó después de cada señal.
+El umbral es el **35% del puntaje máximo alcanzable con los factores que participan**: llegar a +35% → **COMPRAR** (momento favorable), a −35% → **REDUCIR** (momento desfavorable), en medio → **MANTENER**. La señal mueve como máximo ±5 pp la clase del fondo analizado.
+
+**Conclusión «¿Invertir o no?»** (primera tarjeta del Prescriptivo): cruza el veredicto del ranking con el momento. Recomendable + favorable → Invertir ahora; recomendable + desfavorable → Invertir de a poco; aceptable → Invertir con moderación o Esperar; no recomendable → No invertir por ahora (o Mejor otro fondo), con la alternativa del perfil. Un **backtest semanal** muestra qué pasó después de cada señal.
 
 ### IA generativa
 

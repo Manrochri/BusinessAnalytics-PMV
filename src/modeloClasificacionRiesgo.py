@@ -19,7 +19,7 @@ que reproducia la formula. Ahora:
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, f1_score
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
 
 from src.preparacionDatos import dividirTemporal
 from src.utilidades import registrarEvento
@@ -119,6 +119,8 @@ def entrenarClasificadorRiesgo(tablaEtiquetada, semilla=42):
     resultado = {
         "modelo": None, "accuracy": np.nan, "f1Macro": np.nan, "accuracyPersistencia": np.nan,
         "f1Persistencia": np.nan, "superaPersistencia": False, "matrizConfusion": pd.DataFrame(),
+        "precisionMacro": np.nan, "recallMacro": np.nan, "precisionPersistencia": np.nan, "recallPersistencia": np.nan,
+        "aucOvr": np.nan, "porClase": pd.DataFrame(), "filasPrueba": 0,
         "categoriaActual": None, "probabilidades": {}, "categoriaPasadaActual": None,
         "distribucion": {}, "importancia": pd.DataFrame(), "mensaje": "",
     }
@@ -156,6 +158,29 @@ def entrenarClasificadorRiesgo(tablaEtiquetada, semilla=42):
     resultado["accuracyPersistencia"] = float(accuracy_score(reales, persistencia))
     resultado["f1Persistencia"] = float(f1_score(reales, persistencia, average="macro", zero_division=0))
     resultado["superaPersistencia"] = resultado["f1Macro"] > resultado["f1Persistencia"]
+    # Precision y sensibilidad (macro y por clase) y AUC-ROC uno-contra-resto con las probabilidades
+    resultado["precisionMacro"] = float(precision_score(reales, prediccion, average="macro", zero_division=0))
+    resultado["recallMacro"] = float(recall_score(reales, prediccion, average="macro", zero_division=0))
+    resultado["precisionPersistencia"] = float(precision_score(reales, persistencia, average="macro", zero_division=0))
+    resultado["recallPersistencia"] = float(recall_score(reales, persistencia, average="macro", zero_division=0))
+    resultado["filasPrueba"] = int(len(prueba))
+    clases = list(modelo.classes_)
+    resultado["porClase"] = pd.DataFrame({
+        "Clase": clases,
+        "Precisión": precision_score(reales, prediccion, labels=clases, average=None, zero_division=0),
+        "Sensibilidad": recall_score(reales, prediccion, labels=clases, average=None, zero_division=0),
+        "Casos reales": [int((reales == c).sum()) for c in clases],
+    })
+    try:
+        probas = modelo.predict_proba(prueba[columnas])
+        presentes = [i for i, c in enumerate(clases) if (reales == c).any()]
+        if len(presentes) == 2:
+            resultado["aucOvr"] = float(roc_auc_score((reales == clases[presentes[1]]).astype(int), probas[:, presentes[1]]))
+        elif len(presentes) > 2:
+            resultado["aucOvr"] = float(roc_auc_score(reales, probas[:, presentes], labels=[clases[i] for i in presentes],
+                                                      multi_class="ovr", average="macro"))
+    except ValueError as error:  # una sola clase en prueba o probabilidades degeneradas
+        registrarEvento(f"AUC no calculable: {error}", "WARN")
 
     etiquetas = [c for c in CATEGORIAS_RIESGO if c in set(reales) | set(prediccion)]
     resultado["matrizConfusion"] = pd.crosstab(
