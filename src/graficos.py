@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 from src.estilos import COLORES
 from src.utilidades import registrarEvento
 
-TIPOGRAFIA = dict(family="Inter, sans-serif", size=14, color=COLORES["grisOscuro"])
+TIPOGRAFIA = dict(family="Source Sans 3, sans-serif", size=15, color=COLORES["grisOscuro"])
 
 
 def aplicarTema(figura, altura=340, mostrarLeyenda=False):
@@ -496,4 +496,38 @@ def graficarRentabilidadAnual(tabla, nombreFondo="Fondo", nombreBenchmark="Refer
         return aplicarTema(figura, altura=320, mostrarLeyenda=True)
     except Exception as error:
         registrarEvento(f"Error al graficar la rentabilidad anual: {error}", "ERROR")
+        return go.Figure()
+
+
+def graficarComposicion(mezcla):
+    """Anillo con la mezcla del portafolio por clase (acciones, bonos, liquidez)."""
+    try:
+        colores = {"Renta variable": COLORES["azul"], "Renta fija": COLORES["verde"], "Liquidez": COLORES["grisMedio"]}
+        etiquetas = [k for k, v in mezcla.items() if v > 0.001]
+        figura = go.Figure(go.Pie(labels=etiquetas, values=[mezcla[k] for k in etiquetas], hole=0.62, sort=False,
+                                  marker=dict(colors=[colores.get(k, COLORES["grisMedio"]) for k in etiquetas]),
+                                  textinfo="label+percent", hovertemplate="%{label}: <b>%{percent}</b><extra></extra>"))
+        figura.update_layout(hovermode="closest")
+        return aplicarTema(figura, altura=280)
+    except Exception as error:
+        registrarEvento(f"Error al graficar la composición: {error}", "ERROR")
+        return go.Figure()
+
+
+def graficarCrecimiento(series, simbolo="$"):
+    """Crecimiento de 10 000 en cada serie mensual de retornos (dict nombre -> Series)."""
+    try:
+        figura = go.Figure()
+        paleta = [COLORES["azul"], COLORES["grisMedio"], COLORES["verde"], COLORES["ambar"]]
+        for i, (nombre, serie) in enumerate(series.items()):
+            if serie is None or len(serie) == 0:
+                continue
+            valor = 10000 * (1 + serie).cumprod()
+            figura.add_trace(go.Scatter(x=valor.index, y=valor.values, mode="lines", name=nombre,
+                                        line=dict(color=paleta[i % len(paleta)], width=3 if i == 0 else 2),
+                                        hovertemplate="%{x|%b %Y}: <b>" + simbolo + "%{y:,.0f}</b><extra>" + nombre + "</extra>"))
+        figura.update_yaxes(tickprefix=simbolo, tickformat=",.0f")
+        return aplicarTema(figura, altura=320, mostrarLeyenda=True)
+    except Exception as error:
+        registrarEvento(f"Error al graficar el crecimiento: {error}", "ERROR")
         return go.Figure()

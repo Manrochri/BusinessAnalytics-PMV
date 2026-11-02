@@ -1,428 +1,294 @@
 """
 estilos.py
-Identidad visual de la aplicacion, tomada de los mockups de referencia:
-fondo claro, tarjetas blancas con borde sutil, acento azul, tipografia Inter,
-cifras grandes sobre etiquetas pequenas en mayusculas.
+Identidad visual de FundScope, pensada como un libro de cuentas moderno:
+papel frio, tinta azul oscura, cifras grandes en serif y un solo acento
+(azul petroleo) que marca lo elegido. Los veredictos usan tres tonos
+(musgo / ocre / teja) y nada mas lleva color.
 
-Jerarquia tipografica con la proporcion aurea (phi = 1.618): cada nivel es
-raiz(phi) = 1.272 veces el anterior, y cada dos niveles, phi.
-    --t-1  0.886rem  chips e insignias (lo unico por debajo del texto)
-    --t0   1rem      texto, notas, etiquetas, tablas, ayudas
-    --t1   1.272rem  pestanas, titulos de paso y de opcion
-    --t2   1.618rem  cifras de las tarjetas, titulos de seccion
-    --t3   2.058rem  nombre de la app
-La raiz es 17 px en PC y 16 px en el celular: toda la escala se ajusta sola.
+Tipografia: Fraunces (titulos y cifras) + Source Sans 3 (texto y controles).
+Escala aurea (phi = 1.618; cada nivel x 1.272):
+    --t-1 0.886rem chips      --t0 1rem texto      --t1 1.272rem titulos de paso
+    --t2 1.618rem cifras      --t3 2.058rem secciones   --t4 2.618rem portada
+Raiz de 17 px en PC y 16 px en el celular.
 """
 
 from html import escape
 
 import streamlit as st
 
-# Paleta del proyecto: tonos suaves y calmos, con buen contraste (WCAG AA)
-# sobre fondo claro. Los nombres se mantienen para no tocar el resto del codigo.
+# Paleta. Los nombres antiguos (azul, verde, rojo, ambar, gris...) se mantienen
+# porque los usan los graficos y las vistas; cambian los valores.
 COLORES = {
-    "azul": "#3366CC",        # acento principal (azul sereno)
-    "azulClaro": "#EEF3FC",
-    "azulOscuro": "#1E3F80",
-    "verde": "#1E9E6A",       # positivo / recomendable
-    "verdeFondo": "#E6F6EE",
-    "rojo": "#D9534F",        # negativo / no recomendable (coral, menos agresivo)
-    "rojoFondo": "#FDECEA",
-    "ambar": "#D98A10",       # precaucion / aceptable
-    "ambarFondo": "#FDF4E3",
-    "turquesa": "#1A9AA0",
-    "grisOscuro": "#4A5568",
-    "grisMedio": "#94A3B8",
-    "grisClaro": "#F6F8FB",
-    "fondo": "#F4F6FA",
-    "borde": "#E3E8EF",
-    "texto": "#1F2937",
+    "azul": "#1E5A86",        # petroleo: acento, lo elegido, enlaces
+    "azulClaro": "#E7EFF5",
+    "azulOscuro": "#16233A",  # tinta
+    "verde": "#2F7D5B",       # musgo: recomendable / positivo
+    "verdeFondo": "#E6F1EB",
+    "rojo": "#B94A48",        # teja: no recomendable / negativo
+    "rojoFondo": "#F8E8E7",
+    "ambar": "#B8791E",       # ocre: aceptable / precaucion
+    "ambarFondo": "#F7EFE0",
+    "turquesa": "#1E7F86",
+    "grisOscuro": "#4E5A6B",
+    "grisMedio": "#9AA5B4",
+    "grisClaro": "#EEF1F4",
+    "fondo": "#F3F5F7",       # papel frio
+    "borde": "#D9DEE5",
+    "texto": "#16233A",
 }
-# Color por perfil (selector, insignias)
 COLOR_PERFIL = {"Conservador": "turquesa", "Moderado": "azul", "Agresivo": "ambar"}
 
 HOJA_ESTILOS = f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT@9..144,500;9..144,600;9..144,700,100&family=Source+Sans+3:wght@400;600;700&display=swap');
 
-/* Escala aurea (ver la cabecera del modulo) */
 :root {{
-    --t-1: 0.886rem; --t0: 1rem; --t1: 1.272rem; --t2: 1.618rem; --t3: 2.058rem;
+    --t-1: 0.886rem; --t0: 1rem; --t1: 1.272rem; --t2: 1.618rem; --t3: 2.058rem; --t4: 2.618rem;
+    --serif: 'Fraunces', Georgia, serif;
+    --sans: 'Source Sans 3', -apple-system, 'Segoe UI', sans-serif;
+    --tinta: {COLORES['texto']}; --petroleo: {COLORES['azul']}; --papel: {COLORES['fondo']}; --borde: {COLORES['borde']};
 }}
-/* !important: theme.baseFontSize (config.toml) se usa solo para las tablas en lienzo */
 html {{ font-size: 17px !important; }}
-html, body, [class*="css"] {{
-    font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif;
-}}
-/* Texto base con buen interlineado: se lee sin esfuerzo */
-.stApp, .stMarkdown, .stMarkdown p, .stMarkdown li {{
-    font-size: var(--t0);
-    line-height: 1.6;
-    color: {COLORES['texto']};
-}}
-.stApp {{ background-color: {COLORES['fondo']}; }}
+html, body, [class*="css"], .stApp, .stMarkdown, button, input, select, textarea {{ font-family: var(--sans); }}
+.stApp, .stMarkdown, .stMarkdown p, .stMarkdown li {{ font-size: var(--t0); line-height: 1.55; color: var(--tinta); }}
+.stApp {{ background-color: var(--papel); }}
+header[data-testid="stHeader"] {{ background-color: var(--papel); height: 2.8rem; }}
+.block-container {{ padding-top: 3.4rem; padding-bottom: 3rem; max-width: 1180px; }}
 
-header[data-testid="stHeader"] {{
-    background-color: {COLORES['fondo']};
-    height: 3.2rem;
-}}
-.block-container {{
-    padding-top: 4rem;
-    padding-bottom: 3rem;
-    max-width: 1320px;
-}}
+/* Titulos en serif: son la voz de la app */
+h1, h2, h3, h4, h5 {{ font-family: var(--serif); color: var(--tinta); letter-spacing: -0.01em; font-weight: 600; }}
+h4 {{ font-size: var(--t1) !important; }}
+h5 {{ font-size: var(--t1) !important; margin: 0.8rem 0 0.4rem 0 !important; }}
 
-/* Titulos */
-h1, h2, h3, h4 {{ color: {COLORES['texto']}; letter-spacing: -0.01em; }}
-h4 {{ font-size: var(--t1) !important; font-weight: 700 !important; }}
-
-/* Textos de ayuda (st.caption): mas grandes y mas oscuros que el gris de Streamlit */
 div[data-testid="stCaptionContainer"], div[data-testid="stCaptionContainer"] p {{
-    font-size: var(--t0) !important;
-    color: {COLORES['grisOscuro']} !important;
-    line-height: 1.55;
+    font-size: var(--t0) !important; color: {COLORES['grisOscuro']} !important; line-height: 1.5;
 }}
+div[data-testid="stWidgetLabel"] p, label p {{ font-size: var(--t0) !important; font-weight: 600 !important; color: var(--tinta) !important; }}
 
-/* Etiquetas de los controles */
-div[data-testid="stWidgetLabel"] p, label p {{
-    font-size: var(--t0) !important;
-    font-weight: 600 !important;
-    color: {COLORES['texto']} !important;
-}}
-
-/* Encabezado de marca */
-.cabeceraApp {{
-    display: flex; align-items: center; gap: 0.85rem;
-    padding: 0.9rem 1.2rem;
-    background: linear-gradient(90deg, {COLORES['azulClaro']} 0%, #FFFFFF 100%);
-    border: 1px solid {COLORES['borde']};
-    border-radius: 16px;
-    margin-bottom: 1.4rem;
-}}
-.logoApp {{
-    width: 44px; height: 44px;
-    background: {COLORES['azul']};
-    border-radius: 12px;
-    display: flex; align-items: center; justify-content: center;
-    color: #FFFFFF; font-size: 22px;
-}}
-.nombreApp {{ font-size: var(--t3); font-weight: 700; color: {COLORES['azulOscuro']}; letter-spacing: -0.02em; }}
+/* Marca: una linea, sin caja */
+.cabeceraApp {{ display: flex; align-items: baseline; gap: 0.8rem; padding: 0.2rem 0 0.9rem 0; border-bottom: 1px solid var(--borde); margin-bottom: 1.1rem; }}
+.logoApp {{ display: none; }}
+.nombreApp {{ font-family: var(--serif); font-size: var(--t2); font-weight: 700; color: var(--tinta); letter-spacing: -0.02em; }}
 .lemaApp {{ font-size: var(--t0); color: {COLORES['grisOscuro']}; }}
-.etiquetaApp {{
-    margin-left: auto;
-    font-size: var(--t-1); font-weight: 600; color: {COLORES['azul']};
-    background: #FFFFFF; border: 1px solid {COLORES['borde']};
-    padding: 0.25rem 0.7rem; border-radius: 999px;
-}}
+.etiquetaApp {{ margin-left: auto; font-size: var(--t-1); color: {COLORES['grisOscuro']}; }}
 
-/* Tarjetas de indicadores: blancas, sombra suave, etiqueta en minusculas (mas legible) */
-.tarjeta {{
-    background: #FFFFFF;
-    border: 1px solid {COLORES['borde']};
-    border-radius: 14px;
-    padding: 1rem 1.2rem;
-    /* Misma altura para todas las tarjetas de una fila: alto fijo, textos acotados */
-    height: 10rem; box-sizing: border-box; overflow: hidden;
-    display: flex; flex-direction: column;
-    box-shadow: 0 1px 3px rgba(31, 41, 55, 0.06);
-}}
-.tarjetaDestacada {{
-    background: {COLORES['verdeFondo']};
-    border: 1px solid #B7E4CF;
-}}
-.tarjetaEtiqueta {{
-    font-size: var(--t0);
-    font-weight: 600;
-    color: {COLORES['grisOscuro']};
-    margin-bottom: 0.35rem;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}}
-.tarjetaValor {{
-    font-size: var(--t2);
-    font-weight: 700;
-    color: {COLORES['texto']};
-    line-height: 1.2;
-    letter-spacing: -0.01em;
-    overflow-wrap: anywhere;
-}}
+/* Portada */
+.hero {{ padding: 2.2rem 0 1.4rem 0; max-width: 46rem; }}
+.heroTitulo {{ font-family: var(--serif); font-size: var(--t4); line-height: 1.12; font-weight: 600; color: var(--tinta); margin: 0 0 0.8rem 0; letter-spacing: -0.015em; }}
+.heroTitulo em {{ font-style: italic; font-weight: 500; color: var(--petroleo); }}
+.heroTexto {{ font-size: var(--t1); line-height: 1.5; color: {COLORES['grisOscuro']}; margin: 0 0 1.2rem 0; }}
+.heroPasos {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin: 0.6rem 0 1.4rem 0; }}
+.heroPaso {{ border-top: 2px solid var(--tinta); padding-top: 0.6rem; }}
+.heroPaso b {{ display: block; font-family: var(--serif); font-size: var(--t1); font-weight: 600; margin-bottom: 0.15rem; }}
+.heroPaso span {{ color: {COLORES['grisOscuro']}; }}
+
+/* Riel de pasos (arriba, fijo): en que paso estas y que elegiste */
+.flujo {{ display: flex; gap: 0; margin: 0 0 1.2rem 0; border: 1px solid var(--borde); border-radius: 10px; background: #FFFFFF; overflow: hidden; }}
+.flujoPaso {{ flex: 1; display: flex; align-items: center; gap: 0.65rem; padding: 0.6rem 0.9rem; border-right: 1px solid var(--borde); min-width: 0; }}
+.flujoPaso:last-child {{ border-right: none; }}
+.flujoPaso.activo {{ background: {COLORES['azulClaro']}; box-shadow: inset 0 -3px 0 var(--petroleo); }}
+.flujoNumero {{ flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+               font-family: var(--serif); font-weight: 600; font-size: var(--t0); background: {COLORES['grisClaro']}; color: {COLORES['grisOscuro']}; }}
+.flujoPaso.activo .flujoNumero {{ background: var(--petroleo); color: #FFFFFF; }}
+.flujoPaso.listo .flujoNumero {{ background: var(--tinta); color: #FFFFFF; }}
+.flujoTitulo {{ font-size: var(--t-1); color: {COLORES['grisOscuro']}; }}
+.flujoValor {{ font-size: var(--t0); font-weight: 600; color: var(--tinta); line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+
+/* Titulos de seccion */
+.seccion {{ font-family: var(--serif); font-size: var(--t3); font-weight: 600; color: var(--tinta); margin: 1.4rem 0 0.3rem 0; line-height: 1.15; letter-spacing: -0.015em; }}
+.seccionSub {{ font-size: var(--t0); color: {COLORES['grisOscuro']}; margin-bottom: 0.7rem; max-width: 52rem; }}
+
+/* Tarjetas de indicadores: borde fino, cifra en serif, sin sombra */
+.tarjeta {{ background: #FFFFFF; border: 1px solid var(--borde); border-radius: 10px; padding: 0.9rem 1.1rem;
+           height: 10rem; box-sizing: border-box; overflow: hidden; display: flex; flex-direction: column; }}
+.tarjetaDestacada {{ background: {COLORES['verdeFondo']}; border-color: #BFDCCB; }}
+.tarjetaEtiqueta {{ font-size: var(--t0); font-weight: 600; color: {COLORES['grisOscuro']}; margin-bottom: 0.3rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+.tarjetaValor {{ font-family: var(--serif); font-size: var(--t2); font-weight: 600; color: var(--tinta); line-height: 1.15; letter-spacing: -0.01em;
+                overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }}
 .tarjetaValorLargo {{ font-size: var(--t1); }}
-/* Tarjeta de conclusion: el color de fondo dice la decision */
-.tarjetaVerde {{ background: {COLORES['verdeFondo']}; border: 1px solid #B7E4CF; border-left: 6px solid {COLORES['verde']}; }}
-.tarjetaVerde .tarjetaValor {{ color: #13704A; }}
-.tarjetaAmbar {{ background: {COLORES['ambarFondo']}; border: 1px solid #F3D9A6; border-left: 6px solid {COLORES['ambar']}; }}
-.tarjetaAmbar .tarjetaValor {{ color: #9A5B00; }}
-.tarjetaNaranja {{ background: #FDEEE3; border: 1px solid #F5C9A8; border-left: 6px solid #D9692B; }}
-.tarjetaNaranja .tarjetaValor {{ color: #A2461A; }}
-.tarjetaRoja {{ background: {COLORES['rojoFondo']}; border: 1px solid #F5C2C0; border-left: 6px solid {COLORES['rojo']}; }}
-.tarjetaRoja .tarjetaValor {{ color: #A8322E; }}
+/* La tarjeta de conclusion es el unico elemento con color de fondo: la decision se ve desde lejos */
+.tarjetaVerde {{ background: {COLORES['verdeFondo']}; border-color: #BFDCCB; border-left: 6px solid {COLORES['verde']}; }}
+.tarjetaVerde .tarjetaValor {{ color: #1F5C41; }}
+.tarjetaAmbar {{ background: {COLORES['ambarFondo']}; border-color: #E6D2A8; border-left: 6px solid {COLORES['ambar']}; }}
+.tarjetaAmbar .tarjetaValor {{ color: #7E5412; }}
+.tarjetaNaranja {{ background: #F8EBE2; border-color: #E8C9B3; border-left: 6px solid #B9602C; }}
+.tarjetaNaranja .tarjetaValor {{ color: #8A431B; }}
+.tarjetaRoja {{ background: {COLORES['rojoFondo']}; border-color: #E6BDBC; border-left: 6px solid {COLORES['rojo']}; }}
+.tarjetaRoja .tarjetaValor {{ color: #8E3331; }}
 .tarjetaValorPositivo {{ color: {COLORES['verde']}; }}
 .tarjetaValorNegativo {{ color: {COLORES['rojo']}; }}
-.tarjetaNota {{
-    font-size: var(--t0);
-    color: {COLORES['grisOscuro']};
-    margin-top: auto;
-    line-height: 1.4;
-    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
-}}
+.tarjetaNota {{ font-size: var(--t0); color: {COLORES['grisOscuro']}; margin-top: auto; line-height: 1.35;
+               display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }}
 
-/* Paneles (st.container(border=True)) */
-.panel {{
-    background: #FFFFFF;
-    border: 1px solid {COLORES['borde']};
-    border-radius: 16px;
-    padding: 1.4rem 1.5rem;
-    margin-bottom: 1.25rem;
-}}
-div[data-testid="stVerticalBlockBorderWrapper"] {{
-    border: 1px solid {COLORES['borde']} !important;
-    border-radius: 16px !important;
-    background: #FFFFFF;
-    margin-bottom: 1.25rem;
-    box-shadow: 0 1px 3px rgba(31, 41, 55, 0.05);
-}}
-div[data-testid="stVerticalBlockBorderWrapper"] > div {{ border-radius: 16px !important; }}
-.panelTitulo {{
-    font-size: var(--t1);
-    font-weight: 700;
-    color: {COLORES['texto']};
-    padding-bottom: 0.7rem;
-    border-bottom: 1px solid {COLORES['borde']};
-    margin-bottom: 1rem;
-}}
+/* Paneles */
+.panel {{ background: #FFFFFF; border: 1px solid var(--borde); border-radius: 10px; padding: 1.2rem 1.3rem; margin-bottom: 1.1rem; }}
+div[data-testid="stVerticalBlockBorderWrapper"] {{ border: 1px solid var(--borde) !important; border-radius: 10px !important; background: #FFFFFF; margin-bottom: 1.1rem; }}
+div[data-testid="stVerticalBlockBorderWrapper"] > div {{ border-radius: 10px !important; }}
+.panelTitulo {{ font-family: var(--serif); font-size: var(--t1); font-weight: 600; color: var(--tinta); padding-bottom: 0.55rem; border-bottom: 1px solid var(--borde); margin-bottom: 0.9rem; }}
 
-/* Pasos del Prescriptivo: numero en circulo + titulo + explicacion */
-.paso {{ display: flex; gap: 0.9rem; align-items: flex-start; margin: 0.4rem 0 0.9rem 0; }}
-.pasoNumero {{
-    flex: 0 0 auto; width: 38px; height: 38px; border-radius: 50%;
-    background: {COLORES['azul']}; color: #FFFFFF;
-    display: flex; align-items: center; justify-content: center;
-    font-weight: 700; font-size: var(--t1);
-}}
-.pasoTitulo {{ font-size: var(--t1); font-weight: 700; color: {COLORES['texto']}; line-height: 1.3; }}
-.pasoTexto {{ font-size: var(--t0); color: {COLORES['grisOscuro']}; margin-top: 0.15rem; }}
+/* Pasos del Prescriptivo */
+.paso {{ display: flex; gap: 0.8rem; align-items: flex-start; margin: 0.3rem 0 0.8rem 0; }}
+.pasoNumero {{ flex: 0 0 auto; width: 34px; height: 34px; border-radius: 50%; background: var(--tinta); color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-family: var(--serif); font-weight: 600; font-size: var(--t0); }}
+.pasoTitulo {{ font-family: var(--serif); font-size: var(--t1); font-weight: 600; color: var(--tinta); line-height: 1.25; }}
+.pasoTexto {{ font-size: var(--t0); color: {COLORES['grisOscuro']}; margin-top: 0.1rem; }}
 
-/* Recuadro «Lo que estás proyectando» */
-.eleccion {{
-    background: {COLORES['azulClaro']};
-    border: 1px solid #CFDCF5;
-    border-left: 5px solid {COLORES['azul']};
-    border-radius: 12px;
-    padding: 0.9rem 1.1rem;
-    margin: 0.3rem 0 1rem 0;
-}}
-.eleccionTitulo {{ font-size: var(--t-1); font-weight: 700; color: {COLORES['azulOscuro']}; text-transform: uppercase; letter-spacing: 0.05em; }}
-.eleccionFondo {{ font-size: var(--t1); font-weight: 700; color: {COLORES['texto']}; margin: 0.2rem 0; }}
+/* «Lo que estas proyectando» */
+.eleccion {{ background: #FFFFFF; border: 1px solid var(--borde); border-left: 5px solid var(--petroleo); border-radius: 10px; padding: 0.8rem 1rem; margin: 0.3rem 0 1rem 0; }}
+.eleccionTitulo {{ font-size: var(--t-1); font-weight: 600; color: {COLORES['grisOscuro']}; }}
+.eleccionFondo {{ font-family: var(--serif); font-size: var(--t1); font-weight: 600; color: var(--tinta); margin: 0.15rem 0; }}
 .eleccionDetalle {{ font-size: var(--t0); color: {COLORES['grisOscuro']}; }}
-.listaBonos {{ display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.6rem; }}
-.chipBono {{
-    background: #FFFFFF; border: 1px solid #CFDCF5; border-radius: 10px;
-    padding: 0.35rem 0.65rem; font-size: var(--t-1); color: {COLORES['texto']};
-}}
-.chipBono b {{ color: {COLORES['azulOscuro']}; }}
-.chipVerde {{ border-color: #B7E4CF; background: {COLORES['verdeFondo']}; }}
-.chipAmbar {{ border-color: #F3D9A6; background: {COLORES['ambarFondo']}; }}
-.chipRoja {{ border-color: #F5C2C0; background: {COLORES['rojoFondo']}; }}
+.listaBonos {{ display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.55rem; }}
+.chipBono {{ background: {COLORES['grisClaro']}; border: 1px solid var(--borde); border-radius: 8px; padding: 0.3rem 0.6rem; font-size: var(--t-1); color: var(--tinta); }}
+.chipBono b {{ color: var(--tinta); }}
+.chipVerde {{ border-color: #BFDCCB; background: {COLORES['verdeFondo']}; }}
+.chipAmbar {{ border-color: #E6D2A8; background: {COLORES['ambarFondo']}; }}
+.chipRoja {{ border-color: #E6BDBC; background: {COLORES['rojoFondo']}; }}
 
 /* Barras de asignacion */
-.filaAsignacion {{ display: flex; align-items: center; gap: 1rem; padding: 0.5rem 0; }}
-.nombreActivo {{ width: 280px; font-size: var(--t0); color: {COLORES['texto']}; }}
-.pistaBarra {{ flex: 1; height: 22px; background: {COLORES['grisClaro']}; border-radius: 8px; overflow: hidden; }}
-.rellenoBarra {{ height: 100%; border-radius: 8px; }}
-.pesoActivo {{ width: 60px; text-align: right; font-weight: 700; color: {COLORES['texto']}; }}
+.filaAsignacion {{ display: flex; align-items: center; gap: 0.9rem; padding: 0.45rem 0; }}
+.nombreActivo {{ width: 280px; font-size: var(--t0); color: var(--tinta); }}
+.pistaBarra {{ flex: 1; height: 18px; background: {COLORES['grisClaro']}; border-radius: 4px; overflow: hidden; }}
+.rellenoBarra {{ height: 100%; border-radius: 4px; }}
+.pesoActivo {{ width: 60px; text-align: right; font-weight: 600; color: var(--tinta); font-variant-numeric: tabular-nums; }}
 
-/* Pestanas GRANDES: ocupan todo el ancho, botones iguales, la activa en azul.
-   Se apunta a los atributos de BaseWeb y a los roles ARIA para cubrir distintas
-   versiones de Streamlit. */
-.stTabs [data-baseweb="tab-list"], .stTabs [role="tablist"] {{
-    display: flex !important; width: 100% !important; gap: 0.5rem; border-bottom: none !important;
-    background: {COLORES['grisClaro']}; padding: 0.4rem; border-radius: 14px; overflow: visible !important;
+/* Pestanas: una regla subrayada, la activa en tinta. Cada pestana es un
+   bloque ancho con aire a los lados; en Streamlit >= 1.50 el contenedor ya no
+   usa BaseWeb, por eso se apunta a data-testid y a los roles ARIA. */
+div[data-testid="stTabs"] [role="tablist"], .stTabs [role="tablist"], .stTabs [data-baseweb="tab-list"] {{
+    display: flex !important; flex-wrap: nowrap; width: 100% !important; gap: 0.75rem !important;
+    border-bottom: 2px solid var(--borde) !important; background: transparent; padding: 0 !important; border-radius: 0; overflow: visible !important;
 }}
-.stTabs [data-baseweb="tab"], .stTabs button[role="tab"] {{
-    flex: 1 1 0 !important; justify-content: center !important; min-height: 64px !important; height: auto !important;
-    padding: 0.4rem 1rem !important; margin: 0 !important; border-radius: 12px !important;
-    color: {COLORES['grisOscuro']} !important; background: transparent; border: none !important;
+div[data-testid="stTabs"] [role="tab"], .stTabs [role="tab"], .stTabs [data-baseweb="tab"] {{
+    flex: 1 1 0 !important; min-width: 0 !important; max-width: none !important; width: auto !important; box-sizing: border-box;
+    display: flex !important; justify-content: center !important; align-items: center !important; text-align: center;
+    min-height: 60px !important; height: auto !important; padding: 0.5rem 0.9rem !important; margin: 0 0 -2px 0 !important;
+    border-radius: 8px 8px 0 0 !important; border: none !important; border-bottom: 3px solid transparent !important;
+    box-shadow: none !important; outline: none; overflow: visible !important;
+    background: transparent !important; color: {COLORES['grisOscuro']} !important; white-space: normal !important; cursor: pointer;
+    font-family: var(--serif) !important; font-size: var(--t1) !important; font-weight: 600 !important;
 }}
-.stTabs [data-baseweb="tab"] p, .stTabs button[role="tab"] p,
-.stTabs [data-baseweb="tab"] div, .stTabs button[role="tab"] div {{
-    font-size: var(--t1) !important; font-weight: 700 !important; line-height: 1.25 !important;
+div[data-testid="stTabs"] [role="tab"] *, .stTabs [role="tab"] *, .stTabs [data-baseweb="tab"] * {{
+    font-family: var(--serif) !important; font-size: var(--t1) !important; font-weight: 600 !important; line-height: 1.25 !important;
+    color: inherit !important; white-space: normal !important; overflow: visible !important; text-overflow: clip !important;
 }}
-.stTabs [data-baseweb="tab"]:hover, .stTabs button[role="tab"]:hover {{ background: #FFFFFF; }}
-.stTabs [aria-selected="true"] {{
-    background: {COLORES['azul']} !important; color: #FFFFFF !important;
-    box-shadow: 0 2px 8px rgba(51, 102, 204, 0.3);
+div[data-testid="stTabs"] [role="tab"]:hover, .stTabs [role="tab"]:hover {{ background: {COLORES['grisClaro']} !important; color: var(--tinta) !important; }}
+div[data-testid="stTabs"] [role="tab"][aria-selected="true"], .stTabs [role="tab"][aria-selected="true"], .stTabs [aria-selected="true"] {{
+    color: var(--tinta) !important; border-bottom: 3px solid var(--petroleo) !important; background: transparent !important;
+    box-shadow: none !important; border-top: none !important; border-left: none !important; border-right: none !important;
 }}
-.stTabs [aria-selected="true"] p, .stTabs [aria-selected="true"] div {{ color: #FFFFFF !important; }}
+div[data-testid="stTabs"] [role="tab"]:focus-visible, .stTabs [role="tab"]:focus-visible {{ outline: 3px solid {COLORES['azulClaro']}; outline-offset: -3px; }}
+div[data-testid="stTabs"] [data-baseweb="tab-highlight"], div[data-testid="stTabs"] [data-baseweb="tab-border"],
 .stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"] {{ display: none !important; }}
-/* Pestanas internas (dentro de otra pestaña): algo mas bajas */
-.stTabs .stTabs [data-baseweb="tab"], .stTabs .stTabs button[role="tab"] {{ min-height: 50px !important; }}
-.stTabs .stTabs [data-baseweb="tab"] p, .stTabs .stTabs button[role="tab"] p {{ font-size: var(--t0) !important; }}
+/* Pestanas internas (dentro de otra pestana): mas bajas y en sans */
+div[data-testid="stTabs"] div[data-testid="stTabs"] [role="tab"], .stTabs .stTabs [role="tab"] {{ min-height: 46px !important; padding: 0.4rem 0.8rem !important; }}
+div[data-testid="stTabs"] div[data-testid="stTabs"] [role="tab"] *, .stTabs .stTabs [role="tab"] * {{ font-family: var(--sans) !important; font-size: var(--t0) !important; }}
 
-/* Flujo de 3 pasos arriba de la pagina */
-.flujo {{ display: flex; gap: 0.6rem; margin: 0.2rem 0 1.1rem 0; }}
-.flujoPaso {{
-    flex: 1; display: flex; align-items: center; gap: 0.7rem;
-    background: #FFFFFF; border: 1px solid {COLORES['borde']}; border-radius: 12px; padding: 0.7rem 0.9rem;
-}}
-.flujoPaso.activo {{ border: 2px solid {COLORES['azul']}; background: {COLORES['azulClaro']}; }}
-.flujoPaso.listo {{ border-color: #B7E4CF; }}
-.flujoNumero {{
-    flex: 0 0 auto; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-    font-weight: 700; background: {COLORES['grisClaro']}; color: {COLORES['grisOscuro']}; border: 1px solid {COLORES['borde']};
-}}
-.flujoPaso.activo .flujoNumero {{ background: {COLORES['azul']}; color: #FFFFFF; border-color: {COLORES['azul']}; }}
-.flujoPaso.listo .flujoNumero {{ background: {COLORES['verde']}; color: #FFFFFF; border-color: {COLORES['verde']}; }}
-.flujoTitulo {{ font-size: var(--t-1); font-weight: 600; color: {COLORES['grisOscuro']}; text-transform: uppercase; letter-spacing: 0.05em; }}
-.flujoValor {{ font-size: var(--t0); font-weight: 700; color: {COLORES['texto']}; line-height: 1.2; }}
-
-/* Tarjetas de OPCION grandes (perfil, fondo, modo): la tarjeta describe, el boton debajo elige */
-.opcion {{
-    background: #FFFFFF; border: 2px solid {COLORES['borde']}; border-radius: 14px 14px 0 0; border-bottom: none;
-    padding: 0.9rem 1rem 0.7rem 1rem;
-    /* Altura FIJA para que todas las tarjetas de una fila (y sus botones) queden alineadas,
-       sin importar cuanto texto tenga cada una */
-    height: 10rem; box-sizing: border-box;
-    display: flex; flex-direction: column; overflow: hidden;
-}}
+/* Tarjetas de opcion (perfil, fondo, modo): borde en tinta cuando esta elegida */
+.opcion {{ background: #FFFFFF; border: 1px solid var(--borde); border-radius: 10px 10px 0 0; border-bottom: none; padding: 0.85rem 1rem 0.6rem 1rem;
+          height: 10rem; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; }}
 .opcion.compacta {{ height: 10.6rem; }}
 .opcion.compacta .opcionTitulo {{ font-size: var(--t0); }}
-.opcion.compacta .opcionTitulo > span:first-child {{
-    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }}
+.opcion.compacta .opcionTitulo > span:first-child {{ display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }}
 .opcion.compacta .opcionSub {{ -webkit-line-clamp: 2; }}
 .opcionSub {{ display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }}
-
-.opcion.elegida {{ border-color: {COLORES['azul']}; background: {COLORES['azulClaro']}; }}
-.opcionTitulo {{ font-size: var(--t1); font-weight: 700; color: {COLORES['texto']}; line-height: 1.2;
-                 display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }}
-.opcionDato {{ font-size: var(--t0); font-weight: 700; color: {COLORES['verde']}; white-space: nowrap; }}
-.opcionSub {{ font-size: var(--t0); color: {COLORES['grisOscuro']}; margin-top: 0.2rem; line-height: 1.4; }}
-.opcionChip {{
-    display: inline-block; margin-top: auto; align-self: flex-start; max-width: 100%;
-    padding: 0.15rem 0.6rem; border-radius: 999px; font-size: var(--t-1); font-weight: 600;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}}
-.chipVerdeF {{ background: {COLORES['verdeFondo']}; color: #13704A; }}
-.chipAmbarF {{ background: {COLORES['ambarFondo']}; color: #9A5B00; }}
-.chipRojaF {{ background: {COLORES['rojoFondo']}; color: #A8322E; }}
+.opcion.elegida {{ border: 2px solid var(--petroleo); border-bottom: none; background: #FFFFFF; }}
+.opcionTitulo {{ font-family: var(--serif); font-size: var(--t1); font-weight: 600; color: var(--tinta); line-height: 1.2; display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }}
+.opcionDato {{ font-size: var(--t0); font-weight: 600; color: {COLORES['verde']}; white-space: nowrap; font-family: var(--sans); }}
+.opcionSub {{ font-size: var(--t0); color: {COLORES['grisOscuro']}; margin-top: 0.2rem; line-height: 1.35; }}
+.opcionChip {{ display: inline-block; margin-top: auto; align-self: flex-start; max-width: 100%; padding: 0.1rem 0.55rem; border-radius: 6px;
+              font-size: var(--t-1); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+.chipVerdeF {{ background: {COLORES['verdeFondo']}; color: #1F5C41; }}
+.chipAmbarF {{ background: {COLORES['ambarFondo']}; color: #7E5412; }}
+.chipRojaF {{ background: {COLORES['rojoFondo']}; color: #8E3331; }}
 .chipGrisF {{ background: {COLORES['grisClaro']}; color: {COLORES['grisOscuro']}; }}
-/* El boton que va pegado debajo de la tarjeta de opcion */
-.opcionBoton + div .stButton > button, div[data-testid="stVerticalBlock"] .stButton > button {{ min-height: 46px; font-size: var(--t0); }}
+div[data-testid="stVerticalBlock"] .stButton > button {{ min-height: 44px; font-size: var(--t0); }}
 .stButton > button[kind="primary"] {{ font-weight: 700; }}
 
-/* Controles mas grandes y legibles */
-div[data-baseweb="select"] > div {{ min-height: 48px; font-size: var(--t0); }}
-div[data-testid="stNumberInput"] input, div[data-testid="stTextInput"] input {{ font-size: var(--t0); min-height: 46px; }}
+/* Controles */
+div[data-baseweb="select"] > div {{ min-height: 46px; font-size: var(--t0); border-radius: 8px; }}
+div[data-testid="stNumberInput"] input, div[data-testid="stTextInput"] input {{ font-size: var(--t0); min-height: 44px; }}
 div[data-testid="stRadio"] label p {{ font-size: var(--t0) !important; }}
 div[data-testid="stSlider"] {{ padding-top: 0.3rem; }}
-
-/* Titulo de seccion grande */
-.seccion {{ font-size: var(--t2); line-height: 1.25; font-weight: 700; color: {COLORES['texto']}; margin: 1.2rem 0 0.5rem 0; }}
-.seccionSub {{ font-size: var(--t0); color: {COLORES['grisOscuro']}; margin-bottom: 0.6rem; }}
-
-/* Avisos (exito / alerta / error / info) con esquinas suaves */
-div[data-testid="stAlert"] {{ border-radius: 12px; }}
+div[data-testid="stAlert"] {{ border-radius: 8px; }}
 div[data-testid="stAlert"] p {{ font-size: var(--t0); }}
+.stButton > button, .stDownloadButton > button {{ border-radius: 8px; font-weight: 600; padding: 0.45rem 1rem; }}
 
-/* Botones */
-.stButton > button, .stDownloadButton > button {{
-    border-radius: 10px;
-    font-weight: 600;
-    padding: 0.45rem 1rem;
-}}
-
-/* Tablas -------------------------------------------------------------- */
-.stDataFrame {{ border-radius: 12px; }}
-div[data-testid="stDataFrame"], div[data-testid="stDataEditor"] {{ border-radius: 12px; overflow: hidden; }}
-/* Tablas cortas en HTML (tablaHtml): letra del tamano del texto, filas
-   alternadas, encabezado fijo, cifras a la derecha, desplazamiento lateral */
-.tablaFs {{
-    width: 100%; overflow: auto; max-height: 34rem; margin: 0.2rem 0 0.8rem 0;
-    border: 1px solid {COLORES['borde']}; border-radius: 12px; background: #FFFFFF;
-    -webkit-overflow-scrolling: touch;
-}}
-.tablaFs table {{ width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--t0); line-height: 1.45; }}
-.tablaFs th {{
-    position: sticky; top: 0; z-index: 1; text-align: left; white-space: nowrap;
-    background: {COLORES['grisClaro']}; color: {COLORES['grisOscuro']}; font-weight: 700;
-    padding: 0.7rem 0.9rem; border-bottom: 2px solid {COLORES['borde']};
-}}
-.tablaFs td {{
-    padding: 0.65rem 0.9rem; color: {COLORES['texto']}; vertical-align: top;
-    border-bottom: 1px solid {COLORES['borde']}; min-width: 4.5rem;
-}}
-.tablaFs tbody tr:nth-child(even) td {{ background: #FAFBFD; }}
-.tablaFs tbody tr:hover td {{ background: {COLORES['azulClaro']}; }}
+/* Tablas */
+.stDataFrame {{ border-radius: 8px; }}
+div[data-testid="stDataFrame"], div[data-testid="stDataEditor"] {{ border-radius: 8px; overflow: hidden; }}
+.tablaFs {{ width: 100%; overflow: auto; max-height: 34rem; margin: 0.2rem 0 0.8rem 0; border: 1px solid var(--borde); border-radius: 8px; background: #FFFFFF; -webkit-overflow-scrolling: touch; }}
+.tablaFs table {{ width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--t0); line-height: 1.4; }}
+.tablaFs th {{ position: sticky; top: 0; z-index: 1; text-align: left; white-space: nowrap; background: #FFFFFF; color: {COLORES['grisOscuro']}; font-weight: 600; padding: 0.65rem 0.85rem; border-bottom: 2px solid var(--tinta); }}
+.tablaFs td {{ padding: 0.6rem 0.85rem; color: var(--tinta); vertical-align: top; border-bottom: 1px solid var(--borde); min-width: 4.5rem; background: #FFFFFF; }}
+.tablaFs tbody tr:hover td {{ background: {COLORES['grisClaro']}; }}
 .tablaFs tbody tr:last-child td {{ border-bottom: none; }}
 .tablaFs tr.destacada td {{ background: {COLORES['azulClaro']} !important; font-weight: 600; }}
-.tablaFs tr.destacada td:first-child {{ box-shadow: inset 4px 0 0 {COLORES['azul']}; }}
+.tablaFs tr.destacada td:first-child {{ box-shadow: inset 4px 0 0 var(--petroleo); }}
 .tablaFs .num {{ text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }}
-.tablaFs td {{ background: #FFFFFF; }}
 .tablaFs td:first-child:not(.num) {{ font-weight: 600; }}
-/* Primera columna fija al desplazar la tabla hacia los lados */
 .tablaFs th:first-child, .tablaFs td:first-child {{ position: sticky; left: 0; }}
 .tablaFs th:first-child {{ z-index: 2; }}
 .tablaVacia {{ color: {COLORES['grisMedio']}; }}
-.celdaChip {{ display: inline-block; padding: 0.1rem 0.6rem; border-radius: 999px; font-size: var(--t-1); font-weight: 600; white-space: nowrap; }}
+.celdaChip {{ display: inline-block; padding: 0.05rem 0.55rem; border-radius: 6px; font-size: var(--t-1); font-weight: 600; white-space: nowrap; }}
 
-/* Barra lateral */
-section[data-testid="stSidebar"] {{
-    background: #FFFFFF;
-    border-right: 1px solid {COLORES['borde']};
+section[data-testid="stSidebar"] {{ background: #FFFFFF; border-right: 1px solid var(--borde); }}
+.insignia {{ display: inline-block; padding: 0.2rem 0.65rem; border-radius: 6px; font-size: var(--t-1); font-weight: 600; }}
+.insigniaVerde {{ background: {COLORES['verdeFondo']}; color: #1F5C41; }}
+.insigniaAmbar {{ background: {COLORES['ambarFondo']}; color: #7E5412; }}
+.insigniaRoja {{ background: {COLORES['rojoFondo']}; color: #8E3331; }}
+.insigniaAzul {{ background: {COLORES['azulClaro']}; color: var(--petroleo); }}
+.insigniaTurquesa {{ background: #E2F1F2; color: #16666B; }}
+div[data-testid="stExpander"] details {{ border-radius: 10px; border: 1px solid var(--borde); background: #FFFFFF; }}
+div[data-testid="stExpander"] summary p {{ font-size: var(--t0); font-weight: 600; color: var(--tinta); }}
+/* Pasos 1 y 2 ya elegidos: el plegable muestra la eleccion en el titulo */
+.pasoListo div[data-testid="stExpander"] summary p {{ font-family: var(--serif); font-size: var(--t1); }}
+
+/* Portafolio: pesos */
+.pesoFila {{ display: flex; align-items: center; gap: 0.8rem; padding: 0.35rem 0; border-bottom: 1px solid var(--borde); }}
+.pesoNombre {{ flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+.pesoValor {{ font-family: var(--serif); font-size: var(--t1); font-weight: 600; width: 4.5rem; text-align: right; font-variant-numeric: tabular-nums; }}
+
+@media (prefers-reduced-motion: no-preference) {{
+    .opcion, .stButton > button, .flujoPaso {{ transition: border-color 120ms ease, background-color 120ms ease; }}
 }}
+.stButton > button:focus-visible {{ outline: 3px solid {COLORES['azulClaro']}; outline-offset: 1px; }}
 
-/* Insignias de estado */
-.insignia {{
-    display: inline-block;
-    padding: 0.25rem 0.75rem;
-    border-radius: 999px;
-    font-size: var(--t-1);
-    font-weight: 600;
-}}
-.insigniaVerde {{ background: {COLORES['verdeFondo']}; color: #13704A; }}
-.insigniaAmbar {{ background: {COLORES['ambarFondo']}; color: #9A5B00; }}
-.insigniaRoja {{ background: {COLORES['rojoFondo']}; color: #A8322E; }}
-.insigniaAzul {{ background: {COLORES['azulClaro']}; color: {COLORES['azulOscuro']}; }}
-.insigniaTurquesa {{ background: #E3F5F6; color: #12696D; }}
-/* Detalles plegables (st.expander): titulo legible, sin ruido */
-div[data-testid="stExpander"] details {{ border-radius: 12px; border: 1px solid {COLORES['borde']}; background: #FFFFFF; }}
-div[data-testid="stExpander"] summary p {{ font-size: var(--t0); font-weight: 600; color: {COLORES['texto']}; }}
-
-/* Subtitulos de seccion (h5) */
-h5 {{ font-size: var(--t1) !important; font-weight: 700 !important; margin: 0.6rem 0 0.4rem 0 !important; }}
-
-/* ------------------------------------------------------------------ */
-/* Celular y pantallas angostas: una columna, cifras mas compactas,    */
-/* pestanas desplazables y menos margen lateral                        */
-/* ------------------------------------------------------------------ */
 @media (max-width: 640px) {{
-    /* La raiz baja a 16 px: toda la escala aurea se reduce en proporcion */
     html {{ font-size: 16px !important; }}
-    .block-container {{ padding: 3.6rem 0.8rem 2rem 0.8rem; }}
-    .cabeceraApp {{ padding: 0.6rem 0.8rem; gap: 0.6rem; margin-bottom: 0.9rem; }}
-    .logoApp {{ width: 36px; height: 36px; font-size: 18px; }}
-    .nombreApp {{ font-size: var(--t2); }}
+    .block-container {{ padding: 3.2rem 0.8rem 2rem 0.8rem; }}
+    .cabeceraApp {{ gap: 0.5rem; padding-bottom: 0.6rem; margin-bottom: 0.8rem; }}
+    .nombreApp {{ font-size: var(--t1); }}
     .lemaApp, .etiquetaApp {{ display: none; }}
-    .tarjeta {{ padding: 0.85rem 1rem; margin-bottom: 0.5rem; height: auto; min-height: 0; }}
+    .hero {{ padding: 1rem 0 0.6rem 0; }}
+    .heroTitulo {{ font-size: var(--t3); }}
+    .heroTexto {{ font-size: var(--t0); }}
+    .heroPasos {{ grid-template-columns: 1fr; gap: 0.6rem; }}
+    .tarjeta {{ padding: 0.8rem 0.95rem; margin-bottom: 0.5rem; height: auto; min-height: 0; }}
     .tarjetaNota {{ -webkit-line-clamp: 3; }}
     .paso {{ gap: 0.6rem; }}
     .pasoNumero {{ width: 30px; height: 30px; font-size: var(--t0); }}
     .nombreActivo {{ width: 46%; }}
     .pesoActivo {{ width: 44px; }}
-    .stTabs [data-baseweb="tab-list"], .stTabs [role="tablist"] {{ flex-wrap: wrap !important; gap: 0.35rem; }}
-    .stTabs [data-baseweb="tab"], .stTabs button[role="tab"] {{ flex: 1 1 45% !important; min-height: 54px !important; padding: 0.3rem 0.5rem !important; }}
-    .stTabs [data-baseweb="tab"] p, .stTabs button[role="tab"] p {{ font-size: var(--t0) !important; }}
-    .flujo {{ flex-direction: column; gap: 0.4rem; }}
-    .flujoPaso {{ padding: 0.5rem 0.7rem; }}
+    div[data-testid="stTabs"] [role="tablist"], .stTabs [role="tablist"] {{ flex-wrap: wrap !important; gap: 0.35rem !important; }}
+    div[data-testid="stTabs"] [role="tab"], .stTabs [role="tab"] {{ flex: 1 1 42% !important; min-width: 0; min-height: 48px !important; padding: 0.4rem 0.6rem !important; }}
+    div[data-testid="stTabs"] [role="tab"] *, .stTabs [role="tab"] * {{ font-size: var(--t0) !important; }}
+    .pesoFila {{ flex-wrap: wrap; }}
+    .pesoFila .pesoNombre {{ flex: 1 1 100%; white-space: normal; }}
+    .pesoFila .pistaBarra {{ flex: 1 1 auto !important; }}
+    .flujo {{ flex-direction: column; }}
+    .flujoPaso {{ border-right: none; border-bottom: 1px solid var(--borde); padding: 0.45rem 0.7rem; }}
+    .flujoPaso:last-child {{ border-bottom: none; }}
+    .flujoPaso.activo {{ box-shadow: inset 3px 0 0 var(--petroleo); }}
     .opcion, .opcion.compacta {{ height: auto; padding: 0.7rem 0.8rem 0.5rem 0.8rem; }}
     .opcionChip {{ margin-top: 0.45rem; }}
     .opcionTitulo {{ font-size: var(--t1); }}
-    .seccion {{ font-size: var(--t1); }}
+    .seccion {{ font-size: var(--t2); }}
     div[data-testid="stVerticalBlockBorderWrapper"] {{ margin-bottom: 0.8rem; }}
-    .eleccion {{ padding: 0.75rem 0.85rem; }}
+    .eleccion {{ padding: 0.7rem 0.8rem; }}
     .tablaFs th, .tablaFs td {{ padding: 0.55rem 0.7rem; }}
-    /* En el celular el texto no se aprieta: la tabla se desplaza de lado */
-    .tablaFs td:not(.num) {{ min-width: 10rem; }}
-    .tablaFs td:first-child:not(.num) {{ min-width: 8.5rem; max-width: 9.5rem; box-shadow: 2px 0 0 {COLORES['borde']}; }}
     .tablaFs {{ max-height: 28rem; }}
+    .tablaFs td:not(.num) {{ min-width: 10rem; }}
+    .tablaFs td:first-child:not(.num) {{ min-width: 8.5rem; max-width: 9.5rem; box-shadow: 2px 0 0 var(--borde); }}
 }}
 </style>
 """
@@ -442,11 +308,8 @@ def mostrarCabecera(subtitulo="Proyecto académico"):
         st.markdown(
             f"""
             <div class="cabeceraApp">
-                <div class="logoApp">📈</div>
-                <div>
-                    <div class="nombreApp">FundScope</div>
-                    <div class="lemaApp">Elige tu perfil y tu fondo; te decimos si conviene invertir.</div>
-                </div>
+                <div class="nombreApp">FundScope</div>
+                <div class="lemaApp">Fondos mutuos, explicados para decidir.</div>
                 <div class="etiquetaApp">{escape(str(subtitulo))}</div>
             </div>
             """,
@@ -468,12 +331,12 @@ def tarjetaMetrica(etiqueta, valor, nota=None, tono="neutro", destacada=False, c
             "negativo": "tarjetaValor tarjetaValorNegativo",
         }.get(tono, "tarjetaValor")
 
-        if len(str(valor)) > 14:  # textos largos (p. ej. "3 bono(s) de ANGL") en un tamano menor
+        if len(str(valor)) > 12:  # textos largos (p. ej. "3 bono(s) de ANGL") en un tamano menor
             claseValor += " tarjetaValorLargo"
         claseTarjeta = "tarjeta tarjetaDestacada" if destacada else "tarjeta"
         if color in ("verde", "ambar", "naranja", "roja"):  # tarjeta de conclusion
             claseTarjeta = f"tarjeta tarjeta{color.capitalize()}"
-            claseValor = "tarjetaValor" + (" tarjetaValorLargo" if len(str(valor)) > 14 else "")
+            claseValor = "tarjetaValor" + (" tarjetaValorLargo" if len(str(valor)) > 12 else "")
         textoNota = f'<div class="tarjetaNota" title="{escape(str(nota))}">{escape(str(nota))}</div>' if nota else ""
         etiqueta, valor = escape(str(etiqueta)), escape(str(valor))
 
@@ -588,3 +451,21 @@ def tarjetaOpcion(titulo, subtitulo="", chip=None, tonoChip="gris", elegida=Fals
 def tituloSeccion(titulo, subtitulo=""):
     st.markdown(f'<div class="seccion">{escape(str(titulo))}</div>'
                 + (f'<div class="seccionSub">{escape(str(subtitulo))}</div>' if subtitulo else ""), unsafe_allow_html=True)
+
+
+def portada(titulo, texto, pasos):
+    """
+    Portada: un titulo en serif, una linea de explicacion y los pasos del
+    flujo. pasos = lista de (nombre, descripcion). El titulo admite <em>.
+    """
+    piezas = "".join(f"<div class='heroPaso'><b>{escape(str(n))}</b><span>{escape(str(d))}</span></div>" for n, d in pasos)
+    return (f'<div class="hero"><h1 class="heroTitulo">{titulo}</h1><p class="heroTexto">{escape(str(texto))}</p>'
+            f'<div class="heroPasos">{piezas}</div></div>')
+
+
+def filaPeso(nombre, peso, color=None):
+    """Fila del portafolio: nombre, barra y peso en %."""
+    ancho = max(min(float(peso) * 100, 100), 0)
+    return (f'<div class="pesoFila"><div class="pesoNombre">{escape(str(nombre))}</div>'
+            f'<div class="pistaBarra" style="flex:0 0 38%"><div class="rellenoBarra" style="width:{ancho:.1f}%; background:{color or COLORES["azul"]};"></div></div>'
+            f'<div class="pesoValor">{ancho:.0f}%</div></div>')

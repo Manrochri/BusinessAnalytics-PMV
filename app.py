@@ -28,16 +28,17 @@ from config import (
     TICKER_NOTICIAS_POR_DEFECTO,
 )
 from src.analisis import descargarComun, descargarFondo, ejecutarAnalisis, rankingsComunes, rankingsMutuosComunes
-from src.catalogoBonos import benchmarkParaFondo
+from src.catalogoBonos import benchmarkParaFondo, nombreFondo
 from src.datosNoticias import completarHistoriaTono, sugerirTickerNoticias, temaTonoPrensa
-from src.estilos import aplicarEstilos, flujoPasos, mostrarCabecera, tituloSeccion
+from src.estilos import aplicarEstilos, flujoPasos, mostrarCabecera, portada, tituloSeccion
 from src.motorPrescriptivo import conclusionParaDatos, determinarProveedorActivo, proveedorListo
 from src.preparacionDatos import listarFechasSemanales
 from src.utilidades import formatearNumero, formatearPorcentaje
 from src.vistas.asesor import dibujarChatAsesor
-from src.vistas.comunes import ANCHO, filaTarjetas, formatearFecha, selectorFondo, selectorPerfil
+from src.vistas.comunes import ANCHO, filaTarjetas, formatearFecha, perfilActual, selectorFondo, selectorPerfil
 from src.vistas.descriptivo import dibujarDashboardDescriptivo
 from src.vistas.predictivo import dibujarDashboardPredictivo
+from src.vistas.portafolio import dibujarPortafolio
 from src.vistas.prescriptivo import dibujarDashboardPrescriptivo
 
 st.set_page_config(page_title="FundScope | Analítica de Fondos Mutuos", page_icon="📈", layout="wide",
@@ -174,17 +175,20 @@ def dibujarGranularidad(datos):
 
 
 def mostrarBienvenida(parametros):
-    """Pantalla inicial: que hace la app y un unico boton grande."""
-    tituloSeccion("Tres pasos", "Eliges tu perfil, eliges un fondo y te decimos si conviene invertir y cuánto podrías ganar.")
-    st.markdown(flujoPasos([{"titulo": "Paso 1", "valor": "Tu perfil", "estado": "activo"},
-                            {"titulo": "Paso 2", "valor": "El fondo", "estado": ""},
-                            {"titulo": "Paso 3", "valor": "¿Invertir o no?", "estado": ""}]), unsafe_allow_html=True)
-    _, centro, _ = st.columns([1, 2, 1])
-    if centro.button("Comenzar", key="comenzar", type="primary", **ANCHO):
+    """Portada: que hace la app, los pasos y un unico boton."""
+    st.markdown(portada(
+        "¿Conviene invertir en este fondo mutuo, <em>para alguien como tú</em>?",
+        "Dinos qué tipo de inversor eres y qué fondo te interesa. FundScope revisa cómo le fue, qué podría pasar y te dice "
+        "si conviene invertir, cuánto podrías ganar y qué fondos combinar en tu portafolio.",
+        [("Tu perfil", "Conservador, moderado o agresivo: define cuánto riesgo cabe."),
+         ("El fondo", "Fondos mutuos de acciones, mixtos y de bonos, con veredicto, costos y mínimos."),
+         ("La decisión", "Invertir o no, cuánto podrías ganar y tu portafolio con varios fondos.")],
+    ), unsafe_allow_html=True)
+    columnas = st.columns([2, 3])
+    if columnas[0].button("Comenzar", key="comenzar", type="primary", **ANCHO):
         cargarComun(parametros["usarCache"])
         st.rerun()
-    st.caption("La primera vez descarga los fondos mutuos y de bonos de los tres perfiles (1-2 min). "
-               "Los datos no se actualizan solos: se renuevan cuando lo pides.")
+    st.caption("La primera vez descarga los fondos de los tres perfiles (1-2 minutos). Los datos se renuevan solo cuando lo pides.")
 
 
 def principal():
@@ -198,22 +202,30 @@ def principal():
         mostrarBienvenida(parametros)
         return
 
-    # ---- Paso 1: perfil -------------------------------------------------------
-    flujo = st.container()  # la barra de 3 pasos se dibuja al final, cuando ya se sabe que eligio el usuario
-    tituloSeccion("1 · ¿Qué tipo de inversor eres?")
-    perfil = selectorPerfil()
+    # ---- Pasos 1 y 2: perfil y fondo ------------------------------------------
+    # Mientras no haya un resultado, los dos pasos van abiertos; despues se pliegan
+    # y muestran la eleccion en su titulo, para que el resultado quede a la vista.
+    flujo = st.container()  # el riel de pasos se dibuja al final, cuando ya se sabe que eligio el usuario
+    listo = st.session_state.get("flujoListo", False)
+    perfil = perfilActual()
+    with st.expander(f"1 · Tu perfil: {perfil}" + ("  ·  cambiar" if listo else ""), expanded=not listo):
+        st.caption("Define cuánto riesgo cabe en tu cartera y qué fondos se te proponen.")
+        perfil = selectorPerfil()
 
-    # ---- Paso 2: fondo --------------------------------------------------------
     tablaPerfil, _ = st.session_state["rankingsComunes"].get(perfil, (pd.DataFrame(), {}))
     tablaMutuos, _ = st.session_state.get("rankingsMutuos", {}).get(perfil, (pd.DataFrame(), {}))
-    tituloSeccion("2 · ¿Qué fondo mutuo quieres analizar?",
-                  f"Fondos mutuos de acciones, mixtos y de bonos para el perfil {perfil}, del mejor al peor.")
-    ticker = selectorFondo(perfil, tablaPerfil, tablaMutuos)
+    elegido = st.session_state.get(f"fondoAnalizado_{perfil}")
+    tituloFondo = (f"2 · Fondo: {nombreFondo(elegido, conTicker=False)}  ·  cambiar" if listo and elegido and elegido != "__otro__"
+                   else "2 · ¿Qué fondo mutuo quieres analizar?")
+    with st.expander(tituloFondo, expanded=not listo):
+        st.caption(f"Fondos mutuos de acciones, mixtos y de bonos para el perfil {perfil}, del mejor al peor.")
+        ticker = selectorFondo(perfil, tablaPerfil, tablaMutuos)
     if not ticker:
         with flujo:
             st.markdown(flujoPasos([{"titulo": "Perfil", "valor": perfil, "estado": "listo"},
                                     {"titulo": "Fondo", "valor": "Elige uno de la lista", "estado": "activo"},
-                                    {"titulo": "Resultado", "valor": "—", "estado": ""}]), unsafe_allow_html=True)
+                                    {"titulo": "Resultado", "valor": "—", "estado": ""},
+                                    {"titulo": "Portafolio", "valor": "—", "estado": ""}]), unsafe_allow_html=True)
         st.info("Busca el fondo en la lista y presiona «Analizar».")
         return
     benchmark = parametros["benchmarkManual"] or benchmarkParaFondo(ticker, perfil, BENCHMARK_POR_DEFECTO)
@@ -230,11 +242,11 @@ def principal():
         return
 
     # ---- Paso 3: resultado ----------------------------------------------------
-    tituloSeccion(f"3 · Resultado para {datos.get('nombreFondo') or ticker}")
+    tituloSeccion(f"3 · Resultado para {datos.get('nombreFondo') or ticker}", "Qué hacer, qué pasó, qué podría pasar y tu portafolio.")
     if datos.get("fechaCorte") is not None:
         st.info(f"**Evaluación retrospectiva al {datos['fechaCorte']:%d/%m/%Y}.** Precios y noticias solo hasta ese día.")
 
-    pestanas = st.tabs(["🧭 ¿Qué hago?", "📊 ¿Qué pasó?", "🔮 ¿Qué podría pasar?", "💬 Asesor IA"])
+    pestanas = st.tabs(["¿Qué hago?", "¿Qué pasó?", "¿Qué podría pasar?", "Mi portafolio", "Asesor IA"])
     with pestanas[0]:
         decision = dibujarDashboardPrescriptivo(datos, perfil, proveedorInfo)
     with pestanas[1]:
@@ -242,12 +254,18 @@ def principal():
     with pestanas[2]:
         dibujarDashboardPredictivo(datos)
     with pestanas[3]:
+        portafolio = dibujarPortafolio(datos, perfil)
+    with pestanas[4]:
         dibujarChatAsesor(datos, perfil, proveedorInfo, decision)
     conclusion = (decision or {}).get("conclusion") or conclusionParaDatos(datos, perfil)
-    with flujo:  # la barra de arriba muestra la conclusion final (sobre el fondo o sobre tus bonos)
+    st.session_state["flujoListo"] = True  # desde aqui, los pasos 1 y 2 se pliegan
+    textoPortafolio = (f"{len(portafolio['pesos'])} fondos · {portafolio['veredicto'].lower()}" if portafolio else "Ármalo en su pestaña")
+    with flujo:  # el riel de arriba muestra la conclusion final (sobre el fondo o sobre tus bonos) y el portafolio
         st.markdown(flujoPasos([{"titulo": "Perfil", "valor": perfil, "estado": "listo"},
                                 {"titulo": "Fondo", "valor": datos.get("nombreCorto") or ticker, "estado": "listo"},
-                                {"titulo": "Resultado", "valor": conclusion["decision"], "estado": "activo"}]), unsafe_allow_html=True)
+                                {"titulo": "Resultado", "valor": conclusion["decision"], "estado": "activo"},
+                                {"titulo": "Portafolio", "valor": textoPortafolio, "estado": "listo" if portafolio else ""}]),
+                    unsafe_allow_html=True)
 
     # Datos y calidad: al final, plegado (es informacion de respaldo, no de decision)
     st.write("")
