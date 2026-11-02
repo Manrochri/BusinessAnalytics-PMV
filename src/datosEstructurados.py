@@ -66,6 +66,25 @@ def construirTablaNav(serieNav, volumen=None, distribuciones=None):
     return tabla
 
 
+def _nombreCalidad(nombreArchivo):
+    return nombreArchivo.replace(".csv", "_calidad.json")
+
+
+def _guardarCalidad(tabla, nombreArchivo):
+    """Guarda aparte cuantos registros se descartaron: el CSV no conserva df.attrs."""
+    guardarJson({"registrosCrudos": tabla.attrs.get("registrosCrudos"),
+                 "registrosDescartados": tabla.attrs.get("registrosDescartados")}, _nombreCalidad(nombreArchivo))
+
+
+def _restaurarCalidad(tabla, nombreArchivo):
+    """Recupera los conteos de la limpieza al leer el historico desde la cache."""
+    calidad = leerJson(_nombreCalidad(nombreArchivo)) or {}
+    for clave in ("registrosCrudos", "registrosDescartados"):
+        if calidad.get(clave) is not None:
+            tabla.attrs[clave] = int(calidad[clave])
+    return tabla
+
+
 def descargarHistorico(ticker, periodo="5y", usarCache=True):
     """
     Descarga el historico de precios (NAV ajustado) de un fondo o indice.
@@ -78,7 +97,7 @@ def descargarHistorico(ticker, periodo="5y", usarCache=True):
         tabla = leerTabla(nombreArchivo)
         if tabla is not None and not tabla.empty:
             registrarEvento(f"Historico de {ticker} leido desde cache.")
-            return tabla
+            return _restaurarCalidad(tabla, nombreArchivo)
 
     try:
         crudo = _yfTicker(ticker).history(period=periodo, auto_adjust=True)
@@ -96,6 +115,7 @@ def descargarHistorico(ticker, periodo="5y", usarCache=True):
         tabla = construirTablaNav(serie, volumen, distribuciones)
 
         guardarTabla(tabla, nombreArchivo)
+        _guardarCalidad(tabla, nombreArchivo)
         registrarEvento(f"Historico de {ticker} descargado: {len(tabla)} registros.")
         return marcarOrigen(tabla, ORIGEN_DESCARGA)
 
@@ -103,7 +123,7 @@ def descargarHistorico(ticker, periodo="5y", usarCache=True):
         registrarEvento(f"Error al descargar {ticker}: {error}", "ERROR")
         tabla = leerTabla(nombreArchivo)
         if tabla is not None and not tabla.empty:
-            return marcarOrigen(tabla, ORIGEN_RESPALDO, tabla.attrs.get("fechaCache"))
+            return marcarOrigen(_restaurarCalidad(tabla, nombreArchivo), ORIGEN_RESPALDO, tabla.attrs.get("fechaCache"))
         return pd.DataFrame()
 
 

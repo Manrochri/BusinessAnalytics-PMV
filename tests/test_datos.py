@@ -106,3 +106,19 @@ def test_rendimiento_por_distribuciones_cuando_falta_la_ficha():
     assert m["rendimiento"] > 0.04 and m["fuenteRendimiento"].startswith("Distribuciones")
     assert rendimientoPorDistribuciones(tabla.drop(columns="distribucion")) is None
     assert "distribucion" not in __import__("src.preparacionDatos", fromlist=["x"]).listarColumnasPredictoras(construirCaracteristicas(tabla, 10))
+
+
+def test_conteo_de_descartes_sobrevive_a_la_cache(tmp_path, monkeypatch):
+    """El CSV no guarda df.attrs: los conteos de la limpieza se guardan aparte y se recuperan."""
+    import src.utilidades as u
+    import src.datosEstructurados as d
+
+    monkeypatch.setattr(u, "RUTA_CACHE", tmp_path)
+    fechas = pd.bdate_range("2024-01-01", periods=10)
+    valores = [100.0] * 8 + [None, -1.0]  # un faltante y un precio invalido
+    tabla = d.construirTablaNav(pd.Series(valores, index=fechas))
+    assert tabla.attrs["registrosCrudos"] == 10 and tabla.attrs["registrosDescartados"] == 2
+    u.guardarTabla(tabla, "historico_X_5y.csv")
+    d._guardarCalidad(tabla, "historico_X_5y.csv")
+    leida = d._restaurarCalidad(u.leerTabla("historico_X_5y.csv"), "historico_X_5y.csv")
+    assert leida.attrs["registrosCrudos"] == 10 and leida.attrs["registrosDescartados"] == 2
