@@ -52,10 +52,28 @@ from src.utilidades import (
     registrarEvento,
 )
 
-try:  # analizador de sentimiento para los titulares de Yahoo Finance
+# Terminos de prensa financiera que VADER (uso general) no conoce o lee al reves.
+# Escala de VADER: -4 (muy negativo) a +4 (muy positivo).
+LEXICO_FINANCIERO = {
+    "rally": 2.0, "rallies": 2.0, "rallied": 2.0, "surge": 2.2, "surges": 2.2, "surged": 2.2, "soar": 2.4, "soars": 2.4,
+    "soared": 2.4, "jump": 1.6, "jumps": 1.6, "jumped": 1.6, "climb": 1.4, "climbs": 1.4, "climbed": 1.4, "gain": 1.6,
+    "gains": 1.6, "gained": 1.6, "rebound": 1.8, "rebounds": 1.8, "outperform": 1.8, "outperforms": 1.8, "upgrade": 1.8,
+    "upgraded": 1.8, "upgrades": 1.8, "record": 1.0, "beat": 1.2, "beats": 1.2, "bullish": 2.2, "inflows": 1.4,
+    "plunge": -2.6, "plunges": -2.6, "plunged": -2.6, "tumble": -2.2, "tumbles": -2.2, "tumbled": -2.2, "slump": -2.2,
+    "slumps": -2.2, "slumped": -2.2, "selloff": -2.4, "sell-off": -2.4, "slide": -1.6, "slides": -1.6, "slid": -1.6,
+    "drop": -1.4, "drops": -1.4, "dropped": -1.4, "fall": -1.4, "falls": -1.4, "fell": -1.4, "decline": -1.4,
+    "declines": -1.4, "losses": -2.0, "loss": -1.8, "downgrade": -2.0, "downgraded": -2.0, "downgrades": -2.0,
+    "default": -2.6, "defaults": -2.6, "bankruptcy": -3.0, "recession": -2.6, "bearish": -2.2, "volatility": -1.0,
+    "outflows": -1.4, "underperform": -1.8, "underperforms": -1.8, "miss": -1.2, "misses": -1.2, "missed": -1.2,
+    "tariff": -1.0, "tariffs": -1.0, "inflation": -1.0, "turmoil": -2.4, "jitters": -1.6, "fears": -1.8,
+    "yields": 0.0, "yield": 0.0, "cut": 0.0, "cuts": 0.0,  # ambiguos en finanzas: no suman ni restan
+}
+
+try:  # analizador de sentimiento de los titulares: VADER + vocabulario financiero
     from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
     _ANALIZADOR = SentimentIntensityAnalyzer()
+    _ANALIZADOR.lexicon.update(LEXICO_FINANCIERO)
 except ImportError:  # pragma: no cover
     _ANALIZADOR = None
 
@@ -63,23 +81,44 @@ URL_GDELT = "https://api.gdeltproject.org/api/v2/doc/doc"
 URL_YAHOO_RSS = "https://feeds.finance.yahoo.com/rss/2.0/headline"
 URL_GOOGLE_NEWS_RSS = "https://news.google.com/rss/search"
 # Algunos servicios rechazan peticiones sin un navegador declarado
-CABECERAS_RSS = {"User-Agent": "Mozilla/5.0 (FundScope; proyecto academico)", "Accept": "application/rss+xml, application/xml, text/xml"}
+CABECERAS_RSS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36 FundScope/3.0",
+                 "Accept": "application/rss+xml, application/xml, text/xml, */*;q=0.8", "Accept-Language": "en-US,en;q=0.8"}
+# Medios financieros reconocidos: sus titulares pesan completo (1.0) en el sentimiento; el resto, 0.6
+MEDIOS_FINANCIEROS = ("reuters", "bloomberg", "cnbc", "wall street journal", "wsj", "financial times", "ft.com", "barron",
+                      "marketwatch", "morningstar", "yahoo finance", "investopedia", "the economist", "forbes", "fortune",
+                      "business insider", "seeking alpha", "investor's business daily", "kiplinger", "associated press", "ap news",
+                      "the new york times", "nytimes", "washington post", "axios", "fox business", "benzinga", "thestreet",
+                      "etf.com", "nasdaq", "s&p global", "fidelity", "vanguard", "schwab", "federal reserve")
+RELEVANCIA_OTROS_MEDIOS = 0.6
+# Tiempo maximo de espera por fuente y reintentos
+TIEMPO_ESPERA_RSS = 15
+TIEMPO_ESPERA_GDELT = 25
+MESES_HISTORIA_TONO_AUTOMATICA = 12
 # Ventana maxima por consulta de GDELT y minimo de dias de tono para la senal
 MESES_POR_CONSULTA_GDELT = 3
 MINIMO_DIAS_TONO_SENAL = 120
 # Tema de busqueda del tono de prensa por ETF (en ingles, como la prensa que indexa GDELT)
+# Dos variantes por fondo: GDELT devuelve vacio con frases poco frecuentes, y la
+# "O" entre ambas da una serie mas continua. Las frases van entre comillas
+# (asi lo pide GDELT para varias palabras).
 MAPEO_TEMAS_TONO = {
-    "VOO": '"S&P 500"', "SPY": '"S&P 500"', "IVV": '"S&P 500"', "VTI": '"stock market"', "ITOT": '"stock market"',
-    "QQQ": '"Nasdaq"', "VUG": '"growth stocks"', "VTV": '"value stocks"', "VXUS": '"international stocks"',
-    "BND": '"bond market"', "AGG": '"bond market"',
+    "VOO": '("S&P 500" OR "Wall Street")', "SPY": '("S&P 500" OR "Wall Street")', "IVV": '("S&P 500" OR "Wall Street")',
+    "VTI": '("stock market" OR "Wall Street")', "ITOT": '("stock market" OR "Wall Street")',
+    "QQQ": '("Nasdaq" OR "tech stocks")', "VUG": '("growth stocks" OR "tech stocks")', "VTV": '("value stocks" OR "dividend stocks")',
+    "VXUS": '("international stocks" OR "global markets")',
+    "BND": '("bond market" OR "Treasury yields")', "AGG": '("bond market" OR "Treasury yields")',
     # Fondos de bonos del catalogo por perfil
-    "SGOV": '"Treasury bills"', "SHY": '"Treasury yields"', "VGSH": '"Treasury yields"', "VTIP": '"inflation"',
-    "VCSH": '"corporate bonds"', "VCIT": '"corporate bonds"', "IEF": '"Treasury yields"', "MUB": '"municipal bonds"',
-    "HYG": '"high-yield bonds"', "JNK": '"high-yield bonds"', "ANGL": '"junk bonds"', "EMB": '"emerging market debt"',
-    "TLT": '"Treasury yields"',
+    "SGOV": '("Treasury bills" OR "money market")', "SHY": '("Treasury yields" OR "Treasury bonds")', "VGSH": '("Treasury yields" OR "Treasury bonds")',
+    "VTIP": '("inflation" OR "consumer prices")', "VCSH": '("corporate bonds" OR "credit markets")', "VCIT": '("corporate bonds" OR "credit markets")',
+    "IEF": '("Treasury yields" OR "Treasury bonds")', "MUB": '("municipal bonds" OR "muni bonds")',
+    "HYG": '("high-yield bonds" OR "junk bonds")', "JNK": '("high-yield bonds" OR "junk bonds")', "ANGL": '("junk bonds" OR "fallen angels")',
+    "EMB": '("emerging market debt" OR "emerging markets")', "TLT": '("Treasury yields" OR "long-term bonds")',
     # Carteras mixtas (referencia de los fondos mixtos)
-    "AOK": '"stock market"', "AOR": '"stock market"', "AOM": '"stock market"',
+    "AOK": '("stock market" OR "bond market")', "AOR": '("stock market" OR "bond market")', "AOM": '("stock market" OR "bond market")',
 }
+# Tema de respaldo cuando el ticker no tiene uno (fondo cualquiera): el mercado en general
+TEMA_GENERAL = '("stock market" OR "Wall Street")'
+
 
 # Hora de cierre del mercado de EE.UU. (hora de Nueva York)
 HORA_CIERRE = 16
@@ -315,28 +354,42 @@ def parsearRss(contenido, origen):
             "fecha": _fechaNuevaYork(item.findtext("pubDate")), "titulo": titulo,
             "fuente": fuente or origen, "url": (item.findtext("link") or "").strip(), "resumen": resumen[:400],
             "sentimiento": puntaje, "etiqueta": clasificarPuntaje(puntaje) if puntaje is not None else "Sin puntaje",
-            "relevancia": 1.0, "origenNoticia": origen,
+            "relevancia": relevanciaDelMedio(fuente or origen), "origenNoticia": origen,
         })
     tabla = pd.DataFrame(filas)
     return tabla.dropna(subset=["fecha"]) if not tabla.empty else tabla
 
 
-def _consultarRss(url, parametros, origen):
-    """Descarga y lee un feed RSS. Devuelve (tabla, mensajeError)."""
-    try:
-        respuesta = requests.get(url, params=parametros, headers=CABECERAS_RSS, timeout=20)
-        respuesta.raise_for_status()
-        tabla = parsearRss(respuesta.content, origen)
-    except requests.exceptions.HTTPError as error:
-        codigo = error.response.status_code if error.response is not None else "?"
-        return None, f"{origen}: respondió con error HTTP {codigo}" + (" (demasiadas consultas; espera unos minutos)." if codigo == 429 else ".")
-    except requests.exceptions.RequestException as error:
-        return None, f"{origen}: sin conexión ({type(error).__name__})."
-    except ValueError as error:
-        return None, f"{origen}: {error}."
-    if tabla.empty:
-        return None, f"{origen}: sin titulares."
-    return tabla, None
+def relevanciaDelMedio(fuente):
+    """1.0 si es un medio financiero reconocido; si no, un peso menor en el sentimiento."""
+    nombre = str(fuente or "").lower()
+    return 1.0 if any(m in nombre for m in MEDIOS_FINANCIEROS) else RELEVANCIA_OTROS_MEDIOS
+
+
+def _consultarRss(url, parametros, origen, reintentos=1):
+    """Descarga y lee un feed RSS (con un reintento ante fallas de red). Devuelve (tabla, mensajeError)."""
+    error = None
+    for intento in range(reintentos + 1):
+        try:
+            respuesta = requests.get(url, params=parametros, headers=CABECERAS_RSS, timeout=TIEMPO_ESPERA_RSS)
+            respuesta.raise_for_status()
+            tabla = parsearRss(respuesta.content, origen)
+            if tabla.empty:
+                return None, f"{origen}: sin titulares para esta búsqueda."
+            return tabla, None
+        except requests.exceptions.HTTPError as falla:
+            codigo = falla.response.status_code if falla.response is not None else "?"
+            error = f"{origen}: respondió con error HTTP {codigo}" + (" (demasiadas consultas; espera unos minutos)." if codigo == 429 else ".")
+            if codigo in (429, 403):
+                break
+        except requests.exceptions.RequestException as falla:
+            error = f"{origen}: sin conexión ({type(falla).__name__})."
+        except ValueError as falla:
+            error = f"{origen}: {falla}."
+            break
+        if intento < reintentos:
+            time.sleep(2)
+    return None, error
 
 
 def _consultarYahooRss(tickers):
@@ -353,20 +406,48 @@ def _consultarYahooRss(tickers):
     return pd.concat(partes, ignore_index=True), None
 
 
+def _temaSinOperadores(tema):
+    """'("bond market" OR "Treasury yields")' -> 'bond market OR Treasury yields' (Google News no usa parentesis)."""
+    texto = str(tema or "").strip().strip("()")
+    return texto.replace('"', "")
+
+
 def consultaGoogleNews(tema, tickers):
     """Busqueda de Google News: el tema del fondo o sus tickers, ultimos 30 dias."""
-    partes = [str(tema).strip()] if tema else []
+    partes = [_temaSinOperadores(tema)] if tema else []
     partes += [f'"{t} ETF"' for t in dict.fromkeys(t for t in tickers if t)]
     return " OR ".join(partes) + " when:30d"
 
 
-def _consultarGoogleNews(tema, tickers, cantidad):
-    """Titulares de Google News RSS (sin clave). Devuelve (tabla, mensajeError)."""
-    parametros = {"q": consultaGoogleNews(tema, tickers), "hl": "en-US", "gl": "US", "ceid": "US:en"}
-    tabla, error = _consultarRss(URL_GOOGLE_NEWS_RSS, parametros, "Google News")
-    if tabla is not None:
-        tabla = tabla.sort_values("fecha", ascending=False).head(max(cantidad, 50))
-    return tabla, error
+def consultasGoogleNews(tema, tickers):
+    """Busquedas de Google News de mas a menos especifica: tema + tickers, solo el tema, el mercado en general."""
+    consultas = [consultaGoogleNews(tema, tickers)]
+    if tema:
+        consultas.append(_temaSinOperadores(tema) + " when:30d")
+    consultas.append(_temaSinOperadores(TEMA_GENERAL) + " when:14d")
+    return list(dict.fromkeys(consultas))
+
+
+def _consultarGoogleNews(tema, tickers, cantidad, minimoUtil=8):
+    """
+    Titulares de Google News RSS (sin clave). Prueba busquedas cada vez mas
+    amplias hasta reunir un minimo util. Devuelve (tabla, mensajeError).
+    """
+    partes, errores = [], []
+    for consulta in consultasGoogleNews(tema, tickers):
+        tabla, error = _consultarRss(URL_GOOGLE_NEWS_RSS, {"q": consulta, "hl": "en-US", "gl": "US", "ceid": "US:en"}, "Google News")
+        if tabla is not None:
+            partes.append(tabla)
+            if sum(len(p) for p in partes) >= minimoUtil:
+                break
+        elif error:
+            errores.append(error)
+            if "429" in error or "sin conexión" in error:
+                break
+    if not partes:
+        return None, " ".join(dict.fromkeys(errores)) or "Google News: sin titulares."
+    tabla = pd.concat(partes, ignore_index=True).drop_duplicates("url").sort_values("fecha", ascending=False)
+    return tabla.head(max(cantidad, 50)), None
 
 
 def _alphaVantageConClave():
@@ -390,10 +471,10 @@ def descargarNoticias(ticker, limite=None, temas=None, usarCache=True, tickersEx
 
     cantidad = limite or NOTICIAS_LIMITE
     tickers = [ticker, *tickersExtra]
-    consultas = [
-        ("Yahoo Finance", lambda: _consultarYahoo(tickers, cantidad)),
-        ("Yahoo Finance RSS", lambda: _consultarYahooRss(tickers)),
+    consultas = [  # Google News primero: es la mas estable; Yahoo complementa cuando responde
         ("Google News", lambda: _consultarGoogleNews(tema, tickers, cantidad)),
+        ("Yahoo Finance RSS", lambda: _consultarYahooRss(tickers)),
+        ("Yahoo Finance", lambda: _consultarYahoo(tickers, cantidad)),
     ]
     if NOTICIAS_FUENTE == "alphavantage":
         consultas.insert(0, ("Alpha Vantage", lambda: _consultarAlphaVantageEtiquetado(ticker, cantidad, temas)))
@@ -459,7 +540,8 @@ def temaTonoPrensa(ticker, tickerNoticias=None):
     for candidato in (tickerNoticias, ticker):
         if candidato and str(candidato).upper() in MAPEO_TEMAS_TONO:
             return MAPEO_TEMAS_TONO[str(candidato).upper()]
-    return f'"{tickerNoticias or ticker}"'
+    # Un ticker suelto casi nunca aparece en la prensa general: se usa el mercado en general
+    return TEMA_GENERAL
 
 
 def _archivoTono(tema):
@@ -486,20 +568,23 @@ def _consultarGdelt(tema, inicio, fin, reintentos=1):
     }
     for intento in range(reintentos + 1):
         try:
-            respuesta = requests.get(URL_GDELT, params=parametros, timeout=60)
-            respuesta.raise_for_status()
-            if "json" not in respuesta.headers.get("content-type", "") and not respuesta.text.strip().startswith("{"):
-                mensaje = respuesta.text.strip()[:200]
-                if "limit" in mensaje.lower() and intento < reintentos:  # pidio esperar entre consultas
+            respuesta = requests.get(URL_GDELT, params=parametros, timeout=TIEMPO_ESPERA_GDELT, headers=CABECERAS_RSS)
+            texto = respuesta.text.strip()
+            # GDELT avisa de limites y errores como TEXTO (a veces con estado 200): hay que leerlo
+            if respuesta.status_code == 429 or (not texto.startswith("{") and ("limit" in texto.lower() or "too many" in texto.lower())):
+                if intento < reintentos:
                     time.sleep(GDELT_PAUSA_SEGUNDOS)
                     continue
-                return None, f"GDELT: {mensaje}"
+                return None, "GDELT pidió esperar entre consultas (límite de 1 cada 5 s)."
+            respuesta.raise_for_status()
+            if not texto.startswith("{"):
+                return None, f"GDELT: {texto[:160] or 'respuesta vacía'}"
             return parsearTonoGdelt(respuesta.json()), None
         except (requests.exceptions.RequestException, ValueError) as error:
             if intento < reintentos:
                 time.sleep(GDELT_PAUSA_SEGUNDOS)
                 continue
-            return None, f"GDELT no respondió: {error}"
+            return None, f"GDELT no respondió: {type(error).__name__}."
     return None, "GDELT no respondió."
 
 
@@ -522,7 +607,7 @@ def _fusionarTono(nuevas, tema):
     return tabla
 
 
-def descargarTonoPrensa(tema, usarCache=True):
+def descargarTonoPrensa(tema, usarCache=True, completarHistoria=True):
     """
     Serie diaria del tono de la prensa sobre 'tema' (GDELT). Descarga los
     ultimos 3 meses y los SUMA a la historia guardada. Devuelve un DataFrame
@@ -544,10 +629,20 @@ def descargarTonoPrensa(tema, usarCache=True):
             vacio.attrs["motivo"] = error
             return vacio
         return marcarOrigen(guardado, ORIGEN_RESPALDO, guardado.attrs.get("fechaCache"))
-    return marcarOrigen(_fusionarTono(nuevas, tema), ORIGEN_DESCARGA)
+    tabla = _fusionarTono(nuevas, tema)
+    # Sin pedirlo aparte: si la historia no alcanza para la senal, se completa hacia
+    # atras hasta 12 meses (una consulta cada ~5 s; cada ventana se guarda al llegar)
+    if completarHistoria and (tabla is None or len(tabla) < MINIMO_DIAS_TONO_SENAL or
+                              tabla.index.min() > fin - pd.DateOffset(months=MESES_HISTORIA_TONO_AUTOMATICA)):
+        resultado = completarHistoriaTono(tema, MESES_HISTORIA_TONO_AUTOMATICA, hasta=fin - pd.DateOffset(months=MESES_HISTORIA_TONO_AUTOMATICA))
+        if resultado["mensaje"]:
+            registrarEvento(f"Historia del tono ({tema}): {resultado['mensaje']}", "WARN")
+        tabla = _leerTono(tema)
+        tabla.attrs["motivoHistoria"] = resultado["mensaje"]
+    return marcarOrigen(tabla, ORIGEN_DESCARGA)
 
 
-def completarHistoriaTono(tema, meses=24, progreso=None):
+def completarHistoriaTono(tema, meses=24, progreso=None, hasta=None):
     """
     Completa hacia atras la historia del tono de prensa, en ventanas de 3
     meses (una consulta a GDELT cada ~5 s, como pide GDELT). 'progreso' es
@@ -560,6 +655,8 @@ def completarHistoriaTono(tema, meses=24, progreso=None):
     ventanas = int(np.ceil(meses / MESES_POR_CONSULTA_GDELT))
     consultas, mensaje, vacias = 0, "", 0
     for numero in range(ventanas):
+        if hasta is not None and fin <= hasta:
+            break
         inicio = fin - pd.DateOffset(months=MESES_POR_CONSULTA_GDELT)
         if progreso:
             progreso(numero / ventanas, f"Tono de prensa {inicio:%m/%Y} – {fin:%m/%Y}")

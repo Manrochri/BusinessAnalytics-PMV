@@ -30,12 +30,14 @@ PESOS_RENTA_VARIABLE = {"sharpe": 0.35, "volatilidad": 0.25, "caida": 0.25, "ten
 ORDEN_VEREDICTO = {"Recomendable": 0, "Aceptable": 1, "No recomendable": 2, "Sin datos": 3}
 
 
-def descargarUniversoMutuos(periodo="5y", usarCache=True, tickers=None):
+def descargarUniversoMutuos(periodo="5y", usarCache=True, tickers=None, progreso=None):
     """Historico y ficha de cada fondo mutuo del catalogo (y de sus referencias). {ticker: {historico, ficha}}."""
     from src.catalogoFondosMutuos import tickersReferencia, todosLosTickersMutuos
 
     universo = {}
     for ticker in tickers or (todosLosTickersMutuos() + tickersReferencia()):
+        if progreso:
+            progreso(ticker)
         try:
             historico = descargarHistorico(ticker, periodo, usarCache)
             ficha = obtenerInfoFondo(ticker, usarCache)

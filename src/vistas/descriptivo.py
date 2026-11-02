@@ -277,7 +277,11 @@ def dibujarSentimiento(datos):
             st.plotly_chart(graficarSentimiento(serie), **ANCHO, key="descriptivo_plotly_chart_10")
         st.caption(("Ánimo diario de la prensa internacional sobre este tipo de fondo; se compara con su propio último año."
                     if fuenteSerie.startswith("Tono") else "Ánimo promedio de los titulares de cada día.")
-                   + " Para más historia: menú lateral → «Historia de noticias».")
+                   + (" Se descargan hasta 12 meses de historia al actualizar; para más, menú lateral → «Más historia de noticias»."
+                      if fuenteSerie.startswith("Tono") else ""))
+        motivoTono = getattr(serie, "attrs", {}).get("motivoHistoria") or datos.get("motivoTono")
+        if motivoTono:
+            st.caption(f"Historia del tono incompleta: {motivoTono}")
 
         titulares = datos["titulares"]
         if titulares is not None and not titulares.empty:
@@ -292,8 +296,10 @@ def dibujarSentimiento(datos):
                 st.caption("Puntaje de −1 (muy negativo) a +1 (muy positivo)."
                            + (" Fuentes: " + ", ".join(f"{k} ({v})" for k, v in fuentes.items()) + "." if fuentes else ""))
         elif datos.get("fechaCorte") is None:
-            st.caption("No llegaron titulares de las fuentes gratuitas. Prueba «Actualizar datos» sin caché."
-                       + (f" Detalle: {datos['motivoNoticias']}" if datos.get("motivoNoticias") else ""))
+            st.warning("**No llegaron titulares.** " + (datos.get("motivoNoticias") or "Las fuentes no respondieron.")
+                       + " Puedes volver a intentarlo sin descargar todo lo demás.")
+            st.button("Buscar titulares de nuevo", key="reintentarNoticias", type="primary",
+                      on_click=lambda: st.session_state.__setitem__("reintentarNoticiasDe", datos["ticker"]))
 
 
 def dibujarDashboardDescriptivo(datos, perfil):

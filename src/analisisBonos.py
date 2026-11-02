@@ -44,10 +44,15 @@ DIAS_HABILES_ANIO = 252
 VEREDICTOS = ("Recomendable", "Aceptable", "No recomendable", "Sin datos")
 
 
-def descargarUniversoBonos(periodo="5y", usarCache=True, tickers=None):
-    """Descarga historico y ficha de cada bono del catalogo. Devuelve {ticker: {historico, ficha}}."""
+def descargarUniversoBonos(periodo="5y", usarCache=True, tickers=None, progreso=None):
+    """
+    Descarga historico y ficha de cada bono del catalogo. Devuelve {ticker: {historico, ficha}}.
+    progreso: funcion opcional (ticker) que se llama ANTES de descargar cada fondo (para la barra de avance).
+    """
     universo = {}
     for ticker in tickers or todosLosTickersBonos():
+        if progreso:
+            progreso(ticker)
         historico = descargarHistorico(ticker, periodo, usarCache)
         ficha = obtenerInfoFondo(ticker, usarCache)
         universo[ticker] = {"historico": historico, "ficha": ficha}

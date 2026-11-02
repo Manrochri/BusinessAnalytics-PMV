@@ -94,6 +94,35 @@ div[data-testid="stWidgetLabel"] p, label p {{ font-size: var(--t0) !important; 
 .flujoTitulo {{ font-size: var(--t-1); color: {COLORES['grisOscuro']}; }}
 .flujoValor {{ font-size: var(--t0); font-weight: 600; color: var(--tinta); line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
 
+/* El riel queda FIJO arriba al desplazarse: se fija el contenedor de Streamlit que lo
+   envuelve (su padre es la pagina entera; el propio .flujo tiene un padre de su misma
+   altura y no serviria). :has() existe en todos los navegadores actuales. */
+/* Se fija el HIJO DIRECTO del bloque principal de la pagina que contiene el riel
+   (cualquiera que sea su etiqueta en la version de Streamlit): su padre es la
+   pagina entera, que es lo que necesita position: sticky para funcionar. */
+.block-container > [data-testid="stVerticalBlock"] > div:has(.flujo),
+div[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] > div:has(.flujo),
+[data-testid="stVerticalBlock"] > div:has(> div > [data-testid="stVerticalBlock"] .flujo),
+.st-key-riel {{
+    position: -webkit-sticky; position: sticky !important; top: 2.875rem !important; z-index: 60; background: var(--papel);
+    border: none !important; margin: 0 !important; padding: 0.25rem 0 0.35rem 0; overflow: visible !important;
+}}
+.st-key-riel > div, .st-key-riel div {{ overflow: visible !important; }}
+/* Ningun ancestro del riel puede recortar (overflow), o el sticky no funciona */
+div[data-testid="stMainBlockContainer"], div[data-testid="stAppViewBlockContainer"], .block-container,
+div[data-testid="stMainBlockContainer"] > div, [data-testid="stVerticalBlock"]:has(.flujo),
+[data-testid="stVerticalBlockBorderWrapper"]:has(.flujo), [data-testid="stLayoutWrapper"]:has(.flujo) {{ overflow: visible !important; }}
+.flujo a, .flujo a:hover, .flujo a:visited {{ text-decoration: none; color: inherit; }}
+.flujoPaso:hover {{ background: {COLORES['grisClaro']}; }}
+.flujoPaso.activo:hover {{ background: {COLORES['azulClaro']}; }}
+.flujoPaso:focus-visible {{ outline: 3px solid {COLORES['azulClaro']}; outline-offset: -3px; }}
+.flujoTexto {{ min-width: 0; }}
+/* Al saltar a una seccion, que no quede escondida bajo el riel */
+.ancla {{ scroll-margin-top: 8.5rem; height: 0; }}
+.seccion[id] {{ scroll-margin-top: 8.5rem; }}
+html {{ scroll-behavior: smooth; }}
+@media (prefers-reduced-motion: reduce) {{ html {{ scroll-behavior: auto; }} }}
+
 /* Titulos de seccion */
 .seccion {{ font-family: var(--serif); font-size: var(--t3); font-weight: 600; color: var(--tinta); margin: 1.4rem 0 0.3rem 0; line-height: 1.15; letter-spacing: -0.015em; }}
 .seccionSub {{ font-size: var(--t0); color: {COLORES['grisOscuro']}; margin-bottom: 0.7rem; max-width: 52rem; }}
@@ -275,10 +304,20 @@ div[data-testid="stExpander"] summary p {{ font-size: var(--t0); font-weight: 60
     .pesoFila {{ flex-wrap: wrap; }}
     .pesoFila .pesoNombre {{ flex: 1 1 100%; white-space: normal; }}
     .pesoFila .pistaBarra {{ flex: 1 1 auto !important; }}
-    .flujo {{ flex-direction: column; }}
-    .flujoPaso {{ border-right: none; border-bottom: 1px solid var(--borde); padding: 0.45rem 0.7rem; }}
-    .flujoPaso:last-child {{ border-bottom: none; }}
-    .flujoPaso.activo {{ box-shadow: inset 3px 0 0 var(--petroleo); }}
+    /* Riel compacto en una fila: numero y nombre del paso; el valor solo en el paso activo */
+    .flujo {{ flex-direction: row; flex-wrap: wrap; }}
+    .flujoPaso {{ flex: 1 1 0; flex-direction: column; align-items: center; gap: 0.2rem; padding: 0.4rem 0.3rem; text-align: center; }}
+    .flujoPaso.activo {{ box-shadow: inset 0 -3px 0 var(--petroleo); }}
+    .flujoNumero {{ width: 26px; height: 26px; font-size: var(--t-1); }}
+    .flujoTitulo {{ font-size: var(--t-1); }}
+    .flujoValor {{ display: none; }}
+    /* Debajo de los cuatro pasos, una linea con el paso activo y su valor (sin romper el orden) */
+    .flujo::after {{ content: attr(data-activo); flex: 1 1 100%; text-align: center; font-size: var(--t-1); font-weight: 600;
+                     color: var(--tinta); background: {COLORES['azulClaro']}; padding: 0.3rem 0.6rem; border-top: 1px solid var(--borde);
+                     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    .flujo[data-activo=""]::after {{ display: none; }}
+    .st-key-riel, [data-testid="stVerticalBlock"] > div:has(.flujo) {{ top: 2.6rem !important; }}
+    .ancla, .seccion[id] {{ scroll-margin-top: 9rem; }}
     .opcion, .opcion.compacta {{ height: auto; padding: 0.7rem 0.8rem 0.5rem 0.8rem; }}
     .opcionChip {{ margin-top: 0.45rem; }}
     .opcionTitulo {{ font-size: var(--t1); }}
@@ -432,10 +471,19 @@ def flujoPasos(pasos):
     piezas = []
     for i, p in enumerate(pasos, 1):
         marca = "✓" if p.get("estado") == "listo" else str(i)
-        piezas.append(f'<div class="flujoPaso {p.get("estado", "")}"><div class="flujoNumero">{marca}</div><div>'
+        # Cada paso es un enlace a su seccion (#paso-N): el riel fijo sirve para ir y volver sin desplazarse
+        piezas.append(f'<a class="flujoPaso {p.get("estado", "")}" href="#paso-{i}" title="Ir a {escape(str(p["titulo"]))}">'
+                      f'<div class="flujoNumero">{marca}</div><div class="flujoTexto">'
                       f'<div class="flujoTitulo">{escape(str(p["titulo"]))}</div>'
-                      f'<div class="flujoValor">{escape(str(p["valor"]))}</div></div></div>')
-    return '<div class="flujo">' + "".join(piezas) + "</div>"
+                      f'<div class="flujoValor">{escape(str(p["valor"]))}</div></div></a>')
+    activo = next((p for p in pasos if p.get("estado") == "activo"), None)
+    valorActivo = escape(f"{activo['titulo']}: {activo['valor']}") if activo else ""
+    return f'<div class="flujo" data-activo="{valorActivo}">' + "".join(piezas) + "</div>"
+
+
+def ancla(nombre):
+    """Punto de salto para el riel de pasos (se dibuja justo antes de la seccion)."""
+    st.markdown(f'<div class="ancla" id="{escape(str(nombre))}"></div>', unsafe_allow_html=True)
 
 
 def tarjetaOpcion(titulo, subtitulo="", chip=None, tonoChip="gris", elegida=False, compacta=False, dato=None):
@@ -448,8 +496,9 @@ def tarjetaOpcion(titulo, subtitulo="", chip=None, tonoChip="gris", elegida=Fals
             + (f'<div class="opcionSub">{escape(str(subtitulo))}</div>' if subtitulo else "") + textoChip + "</div>")
 
 
-def tituloSeccion(titulo, subtitulo=""):
-    st.markdown(f'<div class="seccion">{escape(str(titulo))}</div>'
+def tituloSeccion(titulo, subtitulo="", id=None):
+    atributo = f' id="{escape(str(id))}"' if id else ""
+    st.markdown(f'<div class="seccion"{atributo}>{escape(str(titulo))}</div>'
                 + (f'<div class="seccionSub">{escape(str(subtitulo))}</div>' if subtitulo else ""), unsafe_allow_html=True)
 
 

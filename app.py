@@ -22,15 +22,24 @@ import streamlit as st
 
 from config import (
     BENCHMARK_POR_DEFECTO,
+    NOTICIAS_LIMITE,
     DIAS_PRONOSTICO,
     PERIODO_HISTORICO,
     SEMANAS_EN_MEMORIA,
     TICKER_NOTICIAS_POR_DEFECTO,
 )
-from src.analisis import descargarComun, descargarFondo, ejecutarAnalisis, rankingsComunes, rankingsMutuosComunes
+from src.analisis import (
+    PASOS_DESCARGA_FONDO,
+    descargarComun,
+    descargarFondo,
+    ejecutarAnalisis,
+    pasosDescargaComun,
+    rankingsComunes,
+    rankingsMutuosComunes,
+)
 from src.catalogoBonos import benchmarkParaFondo, nombreFondo
-from src.datosNoticias import completarHistoriaTono, sugerirTickerNoticias, temaTonoPrensa
-from src.estilos import aplicarEstilos, flujoPasos, mostrarCabecera, portada, tituloSeccion
+from src.datosNoticias import completarHistoriaTono, descargarNoticias, descargarTonoPrensa, sugerirTickerNoticias, temaTonoPrensa
+from src.estilos import ancla, aplicarEstilos, flujoPasos, mostrarCabecera, portada, tituloSeccion
 from src.motorPrescriptivo import conclusionParaDatos, determinarProveedorActivo, proveedorListo
 from src.preparacionDatos import listarFechasSemanales
 from src.utilidades import formatearNumero, formatearPorcentaje
@@ -87,20 +96,27 @@ def dibujarBarraLateral():
 
 
 def dibujarHistoriaTono(contenedor, ticker, tickerNoticias):
-    """Expander para completar meses anteriores del tono de prensa del fondo analizado."""
-    with contenedor, st.expander("Historia de noticias"):
+    """
+    Opcion avanzada: mas meses del tono de prensa. Los ultimos 12 meses ya se
+    descargan solos con «Actualizar datos»; esto sirve para que el sentimiento
+    cubra tambien el periodo de entrenamiento del modelo (anios atras).
+    """
+    with contenedor, st.expander("Más historia de noticias (opcional)"):
         tema = temaTonoPrensa(ticker, tickerNoticias or sugerirTickerNoticias(ticker))
-        st.caption("Descarga meses anteriores del ánimo de la prensa sobre este fondo. Con más historia, las noticias "
-                   "pesan en la recomendación y en el pronóstico. Tarda unos 5 segundos por cada 3 meses.")
-        meses = st.number_input("Meses a descargar", min_value=3, max_value=120, value=24, step=3, key="mesesTono")
-        if st.button("Descargar historia", **ANCHO):
+        st.caption("Los últimos 12 meses del ánimo de la prensa se descargan solos. Con más años, las noticias también entran "
+                   "al modelo predictivo. Tarda unos 5 segundos por cada 3 meses.")
+        meses = st.number_input("Meses adicionales", min_value=3, max_value=120, value=24, step=3, key="mesesTono")
+        if st.button("Descargar más historia", **ANCHO):
             barra = st.progress(0.0, text="Descargando noticias…")
             r = completarHistoriaTono(tema, int(meses), lambda f, t: barra.progress(min(f, 1.0), text=t))
             textoDesde = f" desde el {r['desde']:%d/%m/%Y}" if r["desde"] is not None else ""
-            (st.warning if r["mensaje"] else st.success)(
-                f"Listo: {r['total']} días de noticias{textoDesde}. Presiona «Actualizar datos» para usarlos."
-                if not r["mensaje"] else "No se pudo descargar todo. Intenta de nuevo en unos minutos."
-            )
+            if r["mensaje"] and r["diasNuevos"] <= 0:
+                st.error(f"No se pudo descargar: {r['mensaje']} Ya tenías {r['total']} días{textoDesde}.")
+            elif r["mensaje"]:
+                st.warning(f"Llegaron {r['diasNuevos']} días nuevos ({r['total']} en total{textoDesde}) y luego se cortó: "
+                           f"{r['mensaje']} Vuelve a intentarlo en un minuto para seguir. Presiona «Actualizar datos» para usarlos.")
+            else:
+                st.success(f"Listo: {r['diasNuevos']} días nuevos, {r['total']} en total{textoDesde}. Presiona «Actualizar datos» para usarlos.")
 
 
 def dibujarSelectorSemana(contenedor, entrada):
@@ -119,14 +135,36 @@ def dibujarSelectorSemana(contenedor, entrada):
 # ---------------------------------------------------------------------------
 # Datos y analisis (con memoria por fondo)
 # ---------------------------------------------------------------------------
-def cargarComun(usarCache):
-    """Datos comunes a todos los fondos (universo de bonos, curva, tasa) y sus rankings por perfil."""
-    with st.spinner("Descargando los fondos mutuos y los fondos de bonos de los tres perfiles, la curva del Tesoro y la tasa libre de riesgo..."):
-        comun = descargarComun(usarCache)
-    st.session_state["comun"] = comun
-    st.session_state["rankingsComunes"] = rankingsComunes(comun)
-    st.session_state["rankingsMutuos"] = rankingsMutuosComunes(comun, st.session_state["rankingsComunes"])
-    st.session_state["analisisPorFondo"] = OrderedDict()
+def cargarComun(usarCache, lugar=None):
+    """
+    Datos comunes a todos los fondos (fondos mutuos, fondos de bonos, curva,
+    tasa) y sus rankings por perfil. Muestra una barra de avance con lo que se
+    esta descargando (unos 45 fondos: 1-2 minutos la primera vez).
+    """
+    total = pasosDescargaComun()
+    lugar = lugar if lugar is not None else st.container()
+    with lugar:
+        estado = st.status("Preparando los fondos de los tres perfiles…", expanded=True)
+    with estado:
+        barra = st.progress(0.0, text="Conectando con Yahoo Finance…")
+        detalle = st.empty()
+        detalle.caption(f"Se descargan {total} series de precios. La primera vez tarda 1-2 minutos; después quedan guardadas.")
+        contador = {"n": 0}
+
+        def avanzar(texto):
+            contador["n"] += 1
+            fraccion = min(contador["n"] / total, 0.99)
+            barra.progress(fraccion, text=f"{contador['n']} de {total} · {texto}")
+            estado.update(label=f"Preparando los fondos de los tres perfiles… {fraccion:.0%}")
+
+        comun = descargarComun(usarCache, progreso=avanzar)
+        barra.progress(0.995, text="Calculando los rankings de cada perfil…")
+        st.session_state["comun"] = comun
+        st.session_state["rankingsComunes"] = rankingsComunes(comun)
+        st.session_state["rankingsMutuos"] = rankingsMutuosComunes(comun, st.session_state["rankingsComunes"])
+        st.session_state["analisisPorFondo"] = OrderedDict()
+        barra.progress(1.0, text="Listo")
+        estado.update(label="Datos listos", state="complete", expanded=False)
 
 
 def obtenerAnalisis(ticker, benchmark, parametros, forzar=False):
@@ -134,15 +172,40 @@ def obtenerAnalisis(ticker, benchmark, parametros, forzar=False):
     memoria = st.session_state.setdefault("analisisPorFondo", OrderedDict())
     clave = (ticker, benchmark, parametros["tickerNoticias"], parametros["periodo"], parametros["dias"])
     if forzar or clave not in memoria:
-        with st.spinner(f"Descargando y analizando {ticker}..."):
+        nombre = nombreFondo(ticker, conTicker=False)
+        pasos = len(PASOS_DESCARGA_FONDO) + 1
+        estado = st.status(f"Analizando {nombre}…", expanded=True)
+        with estado:
+            barra = st.progress(0.0, text="Empezando…")
+
+            def avanzar(i, texto):
+                barra.progress(i / pasos, text=f"Paso {i + 1} de {pasos} · {texto}")
+                estado.update(label=f"Analizando {nombre}… {i / pasos:.0%}")
+
             base = descargarFondo(ticker, benchmark, parametros["periodo"], parametros["tickerNoticias"],
-                                  parametros["usarCache"], comun=st.session_state["comun"])
+                                  parametros["usarCache"], comun=st.session_state["comun"], progreso=avanzar)
+            barra.progress((pasos - 1) / pasos, text=f"Paso {pasos} de {pasos} · Entrenando los modelos y calculando la señal")
+            estado.update(label=f"Analizando {nombre}… {(pasos - 1) / pasos:.0%}")
             memoria[clave] = {"base": base, "resultado": ejecutarAnalisis(base, parametros["dias"]),
                               "evaluaciones": OrderedDict()}
+            barra.progress(1.0, text="Listo")
+            estado.update(label=f"Análisis de {nombre} listo", state="complete", expanded=False)
         while len(memoria) > FONDOS_EN_MEMORIA:
             memoria.popitem(last=False)
     memoria.move_to_end(clave)
     return memoria[clave]
+
+
+def refrescarNoticias(entrada):
+    """Vuelve a descargar solo titulares y tono de prensa del fondo y recalcula el analisis (sin bajar precios)."""
+    base = entrada["base"]
+    with st.spinner("Buscando titulares y tono de prensa de nuevo…"):
+        base["noticias"] = descargarNoticias(base["tickerNoticias"], NOTICIAS_LIMITE, usarCache=False,
+                                            tickersExtra=(base["ticker"],) if base["ticker"] != base["tickerNoticias"] else (),
+                                            tema=base.get("temaTono"))
+        base["tono"] = descargarTonoPrensa(base["temaTono"], usarCache=False)
+        entrada["resultado"] = ejecutarAnalisis(base, entrada["resultado"]["diasPronostico"])
+        entrada["evaluaciones"].clear()
 
 
 def obtenerEvaluacion(entrada, fechaCorte):
@@ -185,8 +248,10 @@ def mostrarBienvenida(parametros):
          ("La decisión", "Invertir o no, cuánto podrías ganar y tu portafolio con varios fondos.")],
     ), unsafe_allow_html=True)
     columnas = st.columns([2, 3])
-    if columnas[0].button("Comenzar", key="comenzar", type="primary", **ANCHO):
-        cargarComun(parametros["usarCache"])
+    lugar = st.container()  # aqui aparece la barra de avance al pulsar «Comenzar», justo debajo del boton
+    if columnas[0].button("Comenzar", key="comenzar", type="primary", **ANCHO,
+                          help="Descarga los fondos de los tres perfiles. Tarda 1-2 minutos la primera vez."):
+        cargarComun(parametros["usarCache"], lugar)
         st.rerun()
     st.caption("La primera vez descarga los fondos de los tres perfiles (1-2 minutos). Los datos se renuevan solo cuando lo pides.")
 
@@ -205,9 +270,16 @@ def principal():
     # ---- Pasos 1 y 2: perfil y fondo ------------------------------------------
     # Mientras no haya un resultado, los dos pasos van abiertos; despues se pliegan
     # y muestran la eleccion en su titulo, para que el resultado quede a la vista.
-    flujo = st.container()  # el riel de pasos se dibuja al final, cuando ya se sabe que eligio el usuario
+    # key="riel": Streamlit le pone la clase CSS st-key-riel al contenedor, y asi se fija arriba (estilos.py)
+    flujo = st.container(key="riel")
+    riel = flujo.empty()  # se dibuja YA (provisional) y se vuelve a dibujar al final con la conclusion
     listo = st.session_state.get("flujoListo", False)
     perfil = perfilActual()
+    riel.markdown(flujoPasos([{"titulo": "Perfil", "valor": perfil, "estado": "listo"},
+                              {"titulo": "Fondo", "valor": "Eligiendo…", "estado": "activo"},
+                              {"titulo": "Resultado", "valor": "—", "estado": ""},
+                              {"titulo": "Portafolio", "valor": "—", "estado": ""}]), unsafe_allow_html=True)
+    ancla("paso-1")
     with st.expander(f"1 · Tu perfil: {perfil}" + ("  ·  cambiar" if listo else ""), expanded=not listo):
         st.caption("Define cuánto riesgo cabe en tu cartera y qué fondos se te proponen.")
         perfil = selectorPerfil()
@@ -217,23 +289,29 @@ def principal():
     elegido = st.session_state.get(f"fondoAnalizado_{perfil}")
     tituloFondo = (f"2 · Fondo: {nombreFondo(elegido, conTicker=False)}  ·  cambiar" if listo and elegido and elegido != "__otro__"
                    else "2 · ¿Qué fondo mutuo quieres analizar?")
+    ancla("paso-2")
     with st.expander(tituloFondo, expanded=not listo):
         st.caption(f"Fondos mutuos de acciones, mixtos y de bonos para el perfil {perfil}, del mejor al peor.")
         ticker = selectorFondo(perfil, tablaPerfil, tablaMutuos)
     if not ticker:
-        with flujo:
-            st.markdown(flujoPasos([{"titulo": "Perfil", "valor": perfil, "estado": "listo"},
-                                    {"titulo": "Fondo", "valor": "Elige uno de la lista", "estado": "activo"},
-                                    {"titulo": "Resultado", "valor": "—", "estado": ""},
-                                    {"titulo": "Portafolio", "valor": "—", "estado": ""}]), unsafe_allow_html=True)
+        riel.markdown(flujoPasos([{"titulo": "Perfil", "valor": perfil, "estado": "listo"},
+                                  {"titulo": "Fondo", "valor": "Elige uno de la lista", "estado": "activo"},
+                                  {"titulo": "Resultado", "valor": "—", "estado": ""},
+                                  {"titulo": "Portafolio", "valor": "—", "estado": ""}]), unsafe_allow_html=True)
         st.info("Busca el fondo en la lista y presiona «Analizar».")
         return
+    riel.markdown(flujoPasos([{"titulo": "Perfil", "valor": perfil, "estado": "listo"},
+                              {"titulo": "Fondo", "valor": nombreFondo(ticker, conTicker=False), "estado": "listo"},
+                              {"titulo": "Resultado", "valor": "Calculando…", "estado": "activo"},
+                              {"titulo": "Portafolio", "valor": "—", "estado": ""}]), unsafe_allow_html=True)
     benchmark = parametros["benchmarkManual"] or benchmarkParaFondo(ticker, perfil, BENCHMARK_POR_DEFECTO)
     entrada = obtenerAnalisis(ticker, benchmark, parametros, forzar=ejecutar)
     dibujarHistoriaTono(contenedores["tono"], ticker, parametros["tickerNoticias"])
     if not entrada["resultado"].get("exito"):
         st.error(entrada["resultado"].get("mensaje") or f"No se pudo completar el análisis de {ticker}. Revisa el ticker.")
         return
+    if st.session_state.pop("reintentarNoticiasDe", None) == ticker:  # boton «Buscar titulares de nuevo»
+        refrescarNoticias(entrada)
     fechaCorte = dibujarSelectorSemana(contenedores["semana"], entrada)
 
     datos = obtenerEvaluacion(entrada, fechaCorte)
@@ -242,10 +320,11 @@ def principal():
         return
 
     # ---- Paso 3: resultado ----------------------------------------------------
-    tituloSeccion(f"3 · Resultado para {datos.get('nombreFondo') or ticker}", "Qué hacer, qué pasó, qué podría pasar y tu portafolio.")
+    tituloSeccion(f"3 · Resultado para {datos.get('nombreFondo') or ticker}", "Qué hacer, qué pasó, qué podría pasar y tu portafolio.", id="paso-3")
     if datos.get("fechaCorte") is not None:
         st.info(f"**Evaluación retrospectiva al {datos['fechaCorte']:%d/%m/%Y}.** Precios y noticias solo hasta ese día.")
 
+    ancla("paso-4")  # el portafolio vive en su pestaña: el riel lleva hasta las pestañas
     pestanas = st.tabs(["¿Qué hago?", "¿Qué pasó?", "¿Qué podría pasar?", "Mi portafolio", "Asesor IA"])
     with pestanas[0]:
         decision = dibujarDashboardPrescriptivo(datos, perfil, proveedorInfo)
@@ -260,12 +339,12 @@ def principal():
     conclusion = (decision or {}).get("conclusion") or conclusionParaDatos(datos, perfil)
     st.session_state["flujoListo"] = True  # desde aqui, los pasos 1 y 2 se pliegan
     textoPortafolio = (f"{len(portafolio['pesos'])} fondos · {portafolio['veredicto'].lower()}" if portafolio else "Ármalo en su pestaña")
-    with flujo:  # el riel de arriba muestra la conclusion final (sobre el fondo o sobre tus bonos) y el portafolio
-        st.markdown(flujoPasos([{"titulo": "Perfil", "valor": perfil, "estado": "listo"},
-                                {"titulo": "Fondo", "valor": datos.get("nombreCorto") or ticker, "estado": "listo"},
-                                {"titulo": "Resultado", "valor": conclusion["decision"], "estado": "activo"},
-                                {"titulo": "Portafolio", "valor": textoPortafolio, "estado": "listo" if portafolio else ""}]),
-                    unsafe_allow_html=True)
+    # El riel de arriba muestra la conclusion final (sobre el fondo o sobre tus bonos) y el portafolio
+    riel.markdown(flujoPasos([{"titulo": "Perfil", "valor": perfil, "estado": "listo"},
+                              {"titulo": "Fondo", "valor": datos.get("nombreCorto") or ticker, "estado": "listo"},
+                              {"titulo": "Resultado", "valor": conclusion["decision"], "estado": "activo"},
+                              {"titulo": "Portafolio", "valor": textoPortafolio, "estado": "listo" if portafolio else ""}]),
+                  unsafe_allow_html=True)
 
     # Datos y calidad: al final, plegado (es informacion de respaldo, no de decision)
     st.write("")

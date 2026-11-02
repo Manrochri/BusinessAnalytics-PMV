@@ -128,9 +128,58 @@ def test_noticias_combinan_fuentes_aunque_yahoo_falle(tmp_path, monkeypatch):
 
     monkeypatch.setattr(dn.requests, "get", getFalso)
     tabla = dn.descargarNoticias("HYG", 50, usarCache=False, tema='"high-yield bonds"')
-    # La nota de Yahoo RSS y la de Google son la misma (mismo titulo): queda una sola
-    assert len(tabla) == 2 and set(tabla["origenNoticia"]) == {"Yahoo Finance RSS", "Google News"}
-    assert tabla.attrs["fuentes"] == {"Yahoo Finance RSS": 1, "Google News": 2}
+    # La nota de Yahoo RSS y la de Google son la misma (mismo titulo): queda una sola (Google va primero)
+    assert len(tabla) == 2 and set(tabla["origenNoticia"]) == {"Google News"}
+    assert tabla.attrs["fuentes"] == {"Google News": 2, "Yahoo Finance RSS": 1}
     assert "Yahoo Finance no devolvió" in tabla.attrs["motivo"]
-    consultaGoogle = next(p for u, p in pedidas if u == dn.URL_GOOGLE_NEWS_RSS)["q"]
-    assert consultaGoogle == '"high-yield bonds" OR "HYG ETF" when:30d'
+    consultasGoogle = [p["q"] for u, p in pedidas if u == dn.URL_GOOGLE_NEWS_RSS]
+    # Busca de mas a menos especifica hasta reunir un minimo util (sin comillas en el tema, que Google no necesita)
+    assert consultasGoogle[0] == 'high-yield bonds OR "HYG ETF" when:30d' and consultasGoogle[1] == "high-yield bonds when:30d"
+    assert len(consultasGoogle) == 3 and "stock market" in consultasGoogle[2]
+    # Medios reconocidos pesan 1.0; los demas, menos
+    assert dn.relevanciaDelMedio("Reuters") == 1.0 and dn.relevanciaDelMedio("Blog de Juan") == dn.RELEVANCIA_OTROS_MEDIOS
+    assert dn.temaTonoPrensa("VWINX", "AOK") == dn.MAPEO_TEMAS_TONO["AOK"] and dn.temaTonoPrensa("ZZZZ") == dn.TEMA_GENERAL
+
+
+def test_gdelt_lee_el_limite_como_texto_y_completa_12_meses_solo(tmp_path, monkeypatch):
+    """GDELT avisa el limite como texto (a veces con estado 200); al actualizar se completan 12 meses sin pedirlo."""
+    import json
+
+    import src.utilidades as utilidades
+
+    monkeypatch.setattr(utilidades, "RUTA_CACHE", tmp_path)
+    monkeypatch.setattr(dn.time, "sleep", lambda s: None)
+    monkeypatch.setattr(dn, "GDELT_PAUSA_SEGUNDOS", 0)
+    llamadas = []
+
+    class Respuesta:
+        def __init__(self, texto, codigo=200):
+            self.text, self.status_code, self.headers = texto, codigo, {}
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return json.loads(self.text)
+
+    def getFalso(url, params=None, headers=None, timeout=None):
+        llamadas.append(params)
+        if len(llamadas) == 1:  # primera vez: GDELT pide esperar, con estado 200 y texto plano
+            return Respuesta("Please limit requests to one every 5 seconds.")
+        inicio, fin = pd.to_datetime(params["startdatetime"]), pd.to_datetime(params["enddatetime"])
+        datos = [{"date": d.strftime("%Y%m%dT000000Z"), "value": -1.0} for d in pd.date_range(inicio, fin, freq="D")]
+        return Respuesta(json.dumps({"timeline": [{"series": "Average Tone", "data": datos}]}))
+
+    monkeypatch.setattr(dn.requests, "get", getFalso)
+    tono = dn.descargarTonoPrensa('("bond market" OR "Treasury yields")', usarCache=False)
+    hoy = pd.Timestamp.now().normalize()
+    assert len(tono) >= 360 and tono.index.min() <= hoy - pd.DateOffset(months=11)
+    assert len(llamadas) == 5  # 1 rechazada + 3 meses recientes + 3 ventanas de 3 meses hacia atras
+    assert not tono.attrs.get("motivoHistoria")
+
+    def getRechaza(url, params=None, headers=None, timeout=None):
+        return Respuesta("Please limit requests to one every 5 seconds.")
+
+    monkeypatch.setattr(dn.requests, "get", getRechaza)
+    _, error = dn._consultarGdelt("x", "2026-01-01", "2026-03-01", reintentos=0)
+    assert "esperar" in error

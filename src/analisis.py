@@ -62,27 +62,47 @@ from src.utilidades import describirOrigen, registrarEvento
 PERIODO_BONOS = "5y"
 
 
-def descargarComun(usarCache=True, incluirBonos=True):
+def pasosDescargaComun(incluirBonos=True):
+    """Cuantas descargas hace descargarComun (para la barra de avance)."""
+    from src.catalogoBonos import todosLosTickersBonos
+    from src.catalogoFondosMutuos import tickersReferencia, todosLosTickersMutuos
+
+    if not incluirBonos:
+        return 1
+    return 1 + len(todosLosTickersBonos()) + len(todosLosTickersMutuos()) + len(tickersReferencia()) + len(TICKERS_CURVA) + 1
+
+
+def descargarComun(usarCache=True, incluirBonos=True, progreso=None):
     """
     Datos compartidos por todos los fondos: universo de fondos de bonos por
     perfil, curva del Tesoro y tasa libre de riesgo. Se descargan UNA vez y
     permiten rankear los fondos de cada perfil antes de elegir cual analizar.
+    progreso: funcion opcional (texto) que se llama antes de cada descarga.
     """
+    def avisar(texto):
+        if progreso:
+            progreso(texto)
+
+    avisar("Tasa libre de riesgo (letras del Tesoro)")
     tasaLibre, fuenteTasa = obtenerTasaLibreRiesgo(usarCache)
-    return {
-        "tasaLibre": tasaLibre,
-        "fuenteTasa": fuenteTasa,
-        "bonos": descargarUniversoBonos(PERIODO_BONOS, usarCache) if incluirBonos else {},
-        # Fondos mutuos del catalogo (acciones, mixtos y bonos) y sus referencias
-        "mutuos": descargarUniversoMutuos(PERIODO_BONOS, usarCache) if incluirBonos else {},
-        # Tasas del Tesoro a 3 meses, 5, 10 y 30 anios: curva actual y su historia
-        # (para valorar bonos individuales y simular cambios de tasas)
-        "curvaSeries": {t: descargarHistorico(t, "10y", usarCache) for t in TICKERS_CURVA} if incluirBonos else {},
-        # ETF de acciones de referencia: proyeccion de la parte de renta variable de la cartera
-        "rentaVariable": _historicoSeguro(TICKER_RENTA_VARIABLE, "10y", usarCache) if incluirBonos else pd.DataFrame(),
-        "tickerRentaVariable": TICKER_RENTA_VARIABLE,
-        "fechaDescargaComun": datetime.now(),
-    }
+    comun = {"tasaLibre": tasaLibre, "fechaDescargaComun": datetime.now(), "fuenteTasa": fuenteTasa,
+             "tickerRentaVariable": TICKER_RENTA_VARIABLE}
+    if not incluirBonos:
+        comun.update(bonos={}, mutuos={}, curvaSeries={}, rentaVariable=pd.DataFrame())
+        return comun
+    comun["bonos"] = descargarUniversoBonos(PERIODO_BONOS, usarCache, progreso=lambda t: avisar(f"Fondo de bonos {nombreFondo(t)}"))
+    # Fondos mutuos del catalogo (acciones, mixtos y bonos) y sus referencias
+    comun["mutuos"] = descargarUniversoMutuos(PERIODO_BONOS, usarCache, progreso=lambda t: avisar(f"Fondo {nombreFondo(t)}"))
+    # Tasas del Tesoro a 3 meses, 5, 10 y 30 anios: curva actual y su historia
+    # (para valorar bonos individuales y simular cambios de tasas)
+    comun["curvaSeries"] = {}
+    for t in TICKERS_CURVA:
+        avisar(f"Tasas del Tesoro ({t})")
+        comun["curvaSeries"][t] = descargarHistorico(t, "10y", usarCache)
+    # ETF de acciones de referencia: proyeccion de la parte de renta variable de la cartera
+    avisar(f"Acciones de referencia ({TICKER_RENTA_VARIABLE})")
+    comun["rentaVariable"] = _historicoSeguro(TICKER_RENTA_VARIABLE, "10y", usarCache)
+    return comun
 
 
 def _historicoSeguro(ticker, periodo, usarCache):
@@ -110,35 +130,42 @@ def rankingsMutuosComunes(comun, rankingsBonos=None, fechaCorte=None):
     return {perfil: rankingFondosMutuos(universo, perfil, tasaLibre, rankingsBonos.get(perfil, (None, {}))[0]) for perfil in PERFILES}
 
 
-def descargarFondo(ticker, benchmark, periodo, tickerNoticias=None, usarCache=True, comun=None):
+PASOS_DESCARGA_FONDO = ("Precios del fondo", "Precios de la referencia", "Ficha y posiciones", "Titulares recientes",
+                        "Tono de prensa (hasta 12 meses)")
+
+
+def descargarFondo(ticker, benchmark, periodo, tickerNoticias=None, usarCache=True, comun=None, progreso=None):
     """
     Descarga (o lee de la cache) lo propio de UN fondo: precios, benchmark,
     ficha, posiciones, titulares y tono de prensa. Se combina con los datos
     comunes para formar la 'base' que consume ejecutarAnalisis.
+    progreso: funcion opcional (numeroDePaso, texto) con los pasos de PASOS_DESCARGA_FONDO.
     """
+    def avisar(i):
+        if progreso:
+            progreso(i, PASOS_DESCARGA_FONDO[i])
+
+    avisar(0)
     historico = descargarHistorico(ticker, periodo, usarCache)
     if historico is None or historico.empty:
         return None
     comun = comun if comun is not None else descargarComun(usarCache)
     tickerParaNoticias = (tickerNoticias or "").strip().upper() or sugerirTickerNoticias(ticker)
     base = dict(comun)
-    base.update({
-        "ticker": ticker,
-        "benchmarkTicker": benchmark,
-        "periodo": periodo,
-        "historico": historico,
-        "benchmark": descargarHistorico(benchmark, periodo, usarCache) if benchmark else pd.DataFrame(),
-        "ficha": obtenerInfoFondo(ticker, usarCache),
-        "posiciones": obtenerPrincipalesPosiciones(ticker, 5, usarCache),
-        # Titulares recientes (Yahoo Finance, su RSS y Google News por el tema del fondo; sin clave)
-        "noticias": descargarNoticias(tickerParaNoticias, NOTICIAS_LIMITE, usarCache=usarCache,
-                                      tickersExtra=(ticker,) if ticker != tickerParaNoticias else (),
-                                      tema=temaTonoPrensa(ticker, tickerParaNoticias)),
-        "tickerNoticias": tickerParaNoticias,
-        # Tono diario de la prensa sobre el tema del fondo (GDELT): la historia del sentimiento
-        "temaTono": temaTonoPrensa(ticker, tickerParaNoticias),
-        "fechaDescarga": datetime.now(),
-    })
+    base.update({"ticker": ticker, "benchmarkTicker": benchmark, "periodo": periodo, "historico": historico,
+                 "tickerNoticias": tickerParaNoticias, "temaTono": temaTonoPrensa(ticker, tickerParaNoticias),
+                 "fechaDescarga": datetime.now()})
+    avisar(1)
+    base["benchmark"] = descargarHistorico(benchmark, periodo, usarCache) if benchmark else pd.DataFrame()
+    avisar(2)
+    base["ficha"] = obtenerInfoFondo(ticker, usarCache)
+    base["posiciones"] = obtenerPrincipalesPosiciones(ticker, 5, usarCache)
+    avisar(3)
+    # Titulares recientes (Google News, Yahoo Finance y su RSS por el tema del fondo; sin clave)
+    base["noticias"] = descargarNoticias(tickerParaNoticias, NOTICIAS_LIMITE, usarCache=usarCache,
+                                         tickersExtra=(ticker,) if ticker != tickerParaNoticias else (), tema=base["temaTono"])
+    avisar(4)
+    # Tono diario de la prensa sobre el tema del fondo (GDELT): la historia del sentimiento
     base["tono"] = descargarTonoPrensa(base["temaTono"], usarCache)
     return base
 
@@ -254,6 +281,7 @@ def ejecutarAnalisis(base, dias, fechaCorte=None):
             "riesgoFuturo": riesgoFuturo, "importancia": importancia, "clasificadorRiesgo": clasificador,
             "importanciaEsReferencia": bool(importancia.attrs.get("referencia", False)),
             "inicioTono": tono.index.min() if tono is not None and not tono.empty else None,
+            "motivoTono": getattr(base.get("tono"), "attrs", {}).get("motivoHistoria") or getattr(base.get("tono"), "attrs", {}).get("motivo"),
             "senal": senal, "retornoEsperado": calcularRetornoEsperado(metricas, resumenPron, dias),
             "titulares": obtenerTitularesDestacados(noticias, 5), "universoBonos": universo,
             "motivoNoticias": getattr(base["noticias"], "attrs", {}).get("motivo", ""),
